@@ -63,6 +63,21 @@
   .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
   .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* setup wizard */
+  .wz-steps { display: flex; gap: 4px; margin: 4px 0 16px; flex-wrap: wrap; }
+  .wz-step { flex: 1; min-width: 92px; font-size: 12px; padding: 6px 8px; border-radius: 6px; background: #f2f4f7; color: var(--text-3); text-align: center; }
+  .wz-step.on { background: var(--blue); color: #fff; font-weight: 600; }
+  .wz-step.done { background: var(--green-lt); color: var(--green); }
+  .wz-body { min-height: 220px; }
+  .wz-body h3 { margin-top: 0; }
+  .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+  .choice > input[type=radio] { width: auto; margin-top: 3px; }
+  .choice > div { flex: 1; min-width: 0; }
+  .choice.on { border-color: var(--blue); background: var(--blue-lt); }
+  .big-status { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 8px; margin: 10px 0; }
+  .big-status.ok { background: var(--green-lt); color: var(--green); } .big-status.todo { background: #f2f4f7; color: var(--text-2); } .big-status.warn { background: var(--amber-lt); color: var(--amber); }
+  .checklist { list-style: none; padding: 0; } .checklist li { padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .checklist li:last-child { border-bottom: 0; }
   @media (max-width: 760px) { .grid, .split { grid-template-columns: 1fr; } header { padding: 0 16px; } #user-name { display: none; } }
 </style>
 </head>
@@ -172,6 +187,21 @@
   </div>
 </div>
 
+<!-- Setup wizard -->
+<div class="dialog-bg hidden" id="wz-dialog" role="dialog" aria-modal="true" aria-labelledby="wz-title">
+  <div class="dialog">
+    <h2 id="wz-title">Set up an audience</h2>
+    <div class="wz-steps" id="wz-steps"></div>
+    <div id="wz-msg"></div>
+    <div class="wz-body" id="wz-body"></div>
+    <div class="actions">
+      <button class="btn plain" id="wz-close" type="button">Close</button>
+      <button class="btn plain" id="wz-back" type="button">Back</button>
+      <button class="btn" id="wz-next" type="button">Next</button>
+    </div>
+  </div>
+</div>
+
 <!-- New group -->
 <div class="dialog-bg hidden" id="grp-dialog" role="dialog" aria-modal="true" aria-labelledby="grp-dlg-title">
   <div class="dialog" style="max-width:520px">
@@ -198,8 +228,11 @@ const CONFIG = {
   accessItemId: '994e5086fed6495dafec1c73f39b274d',   // RVS Access table
   accessLayerIndex: 0,
   adminGroupId: '47c04ff75e3d4635a9be3b10fd5f6897',   // CUSEC RVS Management: may use this app, sees everything
-  rvsItemId: '307585a0e7ed4c59aa94cb3c08c9ccfb',      // RVS layer, for record counts per audience
+  rvsItemId: '307585a0e7ed4c59aa94cb3c08c9ccfb',      // RVS layer: views are made from it; record counts
   rvsLayerIndex: 0,
+  // Items that expose ALL RVS records. A State / County / Client group should reach the data only
+  // through its own filtered view, so the wizard flags these if they're shared with the group.
+  fullItems: ['307585a0e7ed4c59aa94cb3c08c9ccfb', '70d1f24a8ae34897b3769f587851a756'],
 };
 const TOKEN_KEY = 'rvs_admin_token';
 const NEW_GROUP = '__new__';
@@ -212,6 +245,9 @@ let groups = [];                       // org groups (id, title, access, owner)
 const groupInfo = {};                  // id -> {title, access, owner, members|null, missing}
 const viewInfo = {};                   // itemId -> {title, type, missing}
 const counts = {};                     // objectid -> number | 'err'
+let fullShares = {};                   // groupId -> [titles of full-RVS items shared with it]
+const viewShares = {};                 // view itemId -> [groupIds it is shared with]
+const fullItemInfo = {};               // full item id -> {title, owner}
 let editing = null, selGroup = null;
 
 const $ = id => document.getElementById(id);
@@ -296,8 +332,23 @@ async function groupMembers(id, force) {
   groupInfo[id] = Object.assign(groupInfo[id] || { id }, { members });
   return members;
 }
+async function itemGroupIds(id) {
+  const r = await rest(sharing(`content/items/${id}/groups`));
+  return [...(r.admin || []), ...(r.member || []), ...(r.other || [])].map(g => g.id);
+}
+async function loadFullShares() {
+  const map = {};
+  await Promise.all(CONFIG.fullItems.map(async id => {
+    try {
+      if (!fullItemInfo[id]) { const it = await rest(sharing(`content/items/${id}`)); fullItemInfo[id] = { title: it.title, owner: it.owner }; }
+      (await itemGroupIds(id)).forEach(g => (map[g] = map[g] || []).push(fullItemInfo[id].title));
+    } catch (_) { /* can't see that item's sharing: no flag */ }
+  }));
+  fullShares = map;
+}
 async function checkAudiences() {
   if (!rvsUrl) { try { rvsUrl = await itemUrl(CONFIG.rvsItemId, CONFIG.rvsLayerIndex); } catch (_) { rvsUrl = null; } }
+  await loadFullShares(); drawAudiences();
   await Promise.all(rows.map(async r => {
     const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
     if (gid && !groupInfo[gid]?.title) {
@@ -306,9 +357,10 @@ async function checkAudiences() {
     }
     if (gid && !groupInfo[gid].missing) { try { await groupMembers(gid); } catch (_) {} }
     if (vid && !viewInfo[vid]) {
-      try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type }; }
+      try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type, url: it.url, owner: it.owner }; }
       catch (_) { viewInfo[vid] = { missing: true }; }
     }
+    if (vid && viewInfo[vid] && !viewInfo[vid].missing) { try { viewShares[vid] = await itemGroupIds(vid); } catch (_) {} }
     if (rvsUrl && audienceWhere(r)) {
       try { const c = await rest(`${rvsUrl}/query`, { where: audienceWhere(r), returnCountOnly: 'true' }); counts[r[accessOid]] = c.count; }
       catch (_) { counts[r[accessOid]] = 'err'; }
@@ -334,6 +386,8 @@ function problems(r) {
   else if (groupInfo[gid]?.members && groupInfo[gid].members.length <= 1) p.push(['warn', 'Group has no members besides its owner']);
   if (!vid) p.push(['warn', 'No view yet']);
   else if (viewInfo[vid]?.missing) p.push(['bad', 'View not found']);
+  else if (gid && viewShares[vid] && !viewShares[vid].includes(gid)) p.push(['bad', 'View not shared with the group']);
+  if (gid && fullShares[gid]) p.push(['bad', 'Group can still open the full RVS layer (all records)']);
   if (counts[r[accessOid]] === 0) p.push(['warn', 'No RVS records match']);
   if (r.AccessType === 'Client' && rows.some(o => o !== r && (o.ClientId || '').trim() && o.ClientId === r.ClientId)) p.push(['bad', 'Client ID used by another row']);
   return p;
@@ -361,7 +415,9 @@ function drawAudiences() {
     return `<tr class="${r.Active === 'No' ? 'inactive' : ''}"><td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td>`
       + `<td><b>${esc(r.AccessName)}</b>${r.Active === 'No' ? '<div class="sub">inactive</div>' : ''}</td><td>${scope}</td><td>${grp}</td><td>${view}</td>`
       + `<td>${c === undefined ? '…' : c === 'err' ? '<span class="sub">n/a</span>' : c}</td><td>${status}</td>`
-      + `<td><button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
+      + `<td style="white-space:nowrap">${ps.some(([k]) => k === 'bad') || !gid || !vid
+          ? `<button class="btn small" data-setup="${esc(r[accessOid])}" type="button">Finish setup</button> ` : `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">Setup</button> `}`
+      + `<button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
   }).join('') || '<tr><td colspan="8" class="muted">No audiences yet. Use “Add audience”.</td></tr>';
 }
 
@@ -508,7 +564,332 @@ async function changeMember(username, add) {
   } catch (e) { say('err', esc(e.message)); }
 }
 
+// ── Setup wizard ────────────────────────────────────────────────────────────
+// Walks a non-technical admin through an audience: who it's for → group → people → data view
+// (created, filtered and shared automatically) → dashboard → done. Every step saves as it goes,
+// so "Finish setup" on the Audiences tab resumes where it was left.
+const WZ_STEPS = ['Who', 'Group', 'People', 'Data view', 'Dashboard', 'Done'];
+const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware',
+  DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas',
+  KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi',
+  MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+  NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia',
+  WI: 'Wisconsin', WY: 'Wyoming', PR: 'Puerto Rico' };
+let wz = null;                                         // { oid, step, groupMode, busy }
+const wzRow = () => wz && wz.oid != null ? rows.find(r => String(r[accessOid]) === String(wz.oid)) || null : null;
+function wzSay(kind, html) { say(kind, html, 'wz-msg'); }
+
+async function writeRow(attrs, oid) {
+  const clean = { ...attrs }; Object.keys(clean).forEach(k => { if (clean[k] === '') clean[k] = null; });
+  const payload = oid != null ? { updates: JSON.stringify([{ attributes: { ...clean, [accessOid]: oid } }]) }
+                              : { adds: JSON.stringify([{ attributes: clean }]) };
+  const res = await rest(`${accessUrl}/applyEdits`, payload, true);
+  const out = (oid != null ? res.updateResults : res.addResults || [])?.[0];
+  if (!out || !out.success) throw new Error(out?.error?.description || 'The RVS Access table did not accept the change.');
+  const newOid = oid != null ? oid : out.objectId;
+  await loadAll(); return newOid;
+}
+function describeAudience(r) {
+  if (r.AccessType === 'Client') return `only <b>${esc(r.ClientName || r.AccessName)}</b>'s buildings (records tagged <code>${esc(r.ClientId)}</code>), wherever they are`;
+  if (r.AccessType === 'County') return `buildings in <b>${esc(r.County)} County, ${esc(r.State)}</b>, leaving out every private client's buildings`;
+  return `buildings in <b>${esc(STATE_NAMES[r.State] || r.AccessName || r.State)}</b>, leaving out every private client's buildings`;
+}
+function firstIncomplete(r) {
+  if (!r) return 1;
+  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
+  if (!gid || groupInfo[gid]?.missing) return 2;
+  if (!vid || viewInfo[vid]?.missing || (viewShares[vid] && !viewShares[vid].includes(gid)) || fullShares[gid]) return 4;
+  if ((groupInfo[gid]?.members || []).length <= 1) return 3;
+  return 6;
+}
+function openWizard(r) {
+  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: r?.GroupId ? 'keep' : 'new', busy: false };
+  $('wz-title').textContent = r ? `Set up: ${r.AccessName}` : 'Set up a new audience';
+  $('wz-dialog').classList.remove('hidden'); renderWizard();
+}
+function renderWizard() {
+  const r = wzRow(), s = wz.step;
+  $('wz-steps').innerHTML = WZ_STEPS.map((t, i) => `<div class="wz-step ${i + 1 === s ? 'on' : i + 1 < s ? 'done' : ''}">${i + 1}. ${t}</div>`).join('');
+  $('wz-back').classList.toggle('hidden', s === 1 || s === 6);
+  $('wz-next').classList.toggle('hidden', s === 6);
+  $('wz-next').textContent = s === 1 ? 'Save and continue' : s === 5 ? 'Save and finish' : 'Continue';
+  $('wz-close').textContent = s === 6 ? 'Close' : 'Close (progress is saved)';
+  wzSay(null, '');
+  $('wz-body').innerHTML = [null, wzWho, wzGroup, wzPeople, wzView, wzDash, wzDone][s](r);
+  if (s === 1) wzWhoSync();
+  if (s === 3) wzLoadMembers();
+}
+
+// Step 1: who is it for
+function wzWho(r) {
+  const t = r?.AccessType || 'Client';
+  return `<h3>Who is this audience?</h3>
+    <p class="muted">A <b>client</b> is a private customer (like Jonesboro CWL). A <b>state</b> or <b>county</b> is the public program.</p>
+    <div class="grid" style="margin-top:10px">
+      <div><label for="wz-type">Type</label><select id="wz-type" ${r ? 'disabled' : ''}>
+        ${['Client', 'County', 'State'].map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div><label for="wz-state">State (2 letters)</label><input id="wz-state" maxlength="2" value="${esc(r?.State || '')}" placeholder="AR" /></div>
+      <div class="full wz-client"><label for="wz-clientname">Client name</label><input id="wz-clientname" value="${esc(r?.ClientName || '')}" placeholder="Jonesboro CWL" /></div>
+      <div class="wz-client"><label for="wz-clientid">Client ID (made for you)</label><input id="wz-clientid" value="${esc(r?.ClientId || '')}" ${r?.ClientId ? 'readonly' : ''} />
+        <div class="hint">${r?.ClientId ? 'Locked: views and exports use it.' : 'The tag put on this client\'s RVS records. Can\'t be changed later.'}</div></div>
+      <div class="full wz-county"><label for="wz-county">County (without the word “County”)</label><input id="wz-county" value="${esc(r?.County || '')}" placeholder="Craighead" /></div>
+      <div class="full wz-name"><label for="wz-name">Name shown in this admin app</label><input id="wz-name" value="${esc(r?.AccessName || '')}" /></div>
+    </div>
+    <p class="muted" id="wz-who-desc" style="margin-top:12px"></p>`;
+}
+function wzWhoValues() {
+  const t = $('wz-type').value;
+  const state = $('wz-state').value.trim().toUpperCase(), county = $('wz-county').value.trim().replace(/\s+(county|parish)$/i, '');
+  const cname = $('wz-clientname').value.trim();
+  const name = $('wz-name').value.trim() || (t === 'Client' ? cname : t === 'County' ? (county && state ? `${county} County, ${state}` : '') : (STATE_NAMES[state] || state));
+  return { AccessType: t, AccessName: name, State: state, County: t === 'County' ? county : '',
+           ClientId: t === 'Client' ? $('wz-clientid').value.trim() : '', ClientName: t === 'Client' ? cname : '' };
+}
+function wzWhoSync() {
+  const t = $('wz-type').value;
+  document.querySelectorAll('.wz-client').forEach(e => e.classList.toggle('hidden', t !== 'Client'));
+  document.querySelectorAll('.wz-county').forEach(e => e.classList.toggle('hidden', t !== 'County'));
+  const v = wzWhoValues();
+  $('wz-who-desc').innerHTML = audienceWhere(v) ? `This audience will see ${describeAudience(v)}.` : '';
+}
+function wzWhoErrors(v, r) {
+  const e = [];
+  if (!/^[A-Z]{2}$/.test(v.State) && !(v.AccessType === 'Client' && !v.State)) e.push('Enter the 2-letter state.');
+  if (v.AccessType === 'County' && !v.County) e.push('Enter the county.');
+  if (v.AccessType === 'Client') {
+    if (!v.ClientName) e.push('Enter the client name.');
+    if (!/^[a-z0-9_]{2,60}$/.test(v.ClientId)) e.push('The Client ID must be 2-60 lowercase letters, numbers or _.');
+    if (rows.some(o => o !== r && (o.ClientId || '') === v.ClientId)) e.push(`Client ID "${v.ClientId}" is already used.`);
+  }
+  if (!v.AccessName) e.push('Enter a name.');
+  const dup = rows.find(o => o !== r && audienceWhere(o) && audienceWhere(o) === audienceWhere(v));
+  if (dup) e.push(`"${dup.AccessName}" already covers these records.`);
+  return e;
+}
+
+// Step 2: group
+function wzGroup(r) {
+  const gid = (r.GroupId || '').trim(), g = groupInfo[gid];
+  const suggested = r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}` : `RVS State - ${r.AccessName}`;
+  const opt = (mode, html) => `<label class="choice ${wz.groupMode === mode ? 'on' : ''}"><input type="radio" name="wz-gmode" value="${mode}" ${wz.groupMode === mode ? 'checked' : ''}><div>${html}</div></label>`;
+  return `<h3>Which ArcGIS group is this audience?</h3>
+    <p class="muted">Everyone in the group will see ${describeAudience(r)}.</p><div style="margin-top:10px">
+    ${gid && !g?.missing ? opt('keep', `Keep the current group: <b>${esc(g?.title || r.GroupName || gid)}</b>`) : ''}
+    ${opt('new', `Create a new group named<br><input id="wz-newgroup" value="${esc(suggested)}" style="margin-top:6px">`)}
+    ${opt('existing', `Use another existing group<br><select id="wz-existing" style="margin-top:6px">${groups.map(x => `<option value="${esc(x.id)}" ${x.id === gid ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`)}
+    </div>`;
+}
+
+// Step 3: people
+function wzPeople(r) {
+  return `<h3>Who is in ${esc(groupInfo[r.GroupId]?.title || 'the group')}?</h3>
+    <p class="muted">Add the logins of the people who should see this audience's records. They need an account in the CUSEC Hub community organization first.</p>
+    <input type="search" id="wz-user-search" placeholder="Find a person by name or username…" style="margin-top:10px">
+    <div id="wz-user-results"></div>
+    <h3>Current members</h3><div id="wz-mem-list"><p class="muted"><span class="spinner"></span>Loading…</p></div>`;
+}
+async function wzLoadMembers() {
+  const gid = wzRow()?.GroupId; if (!gid) return;
+  try {
+    const list = await groupMembers(gid, true);
+    $('wz-mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span></div>`
+      + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-wzremove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('');
+  } catch (e) { $('wz-mem-list').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
+}
+let wzTimer = null;
+function wzSearch() {
+  clearTimeout(wzTimer); const q = $('wz-user-search').value.trim();
+  if (q.length < 2) { $('wz-user-results').innerHTML = ''; return; }
+  wzTimer = setTimeout(async () => {
+    try {
+      const r = await rest(sharing('community/users'), { q: `${q.replace(/[^\w.@ -]/g, '')} AND orgid:${me.orgId}`, num: 20 });
+      const cur = new Set((groupInfo[wzRow().GroupId]?.members || []).map(m => m.username));
+      $('wz-user-results').innerHTML = (r.results || []).map(u => `<div class="member"><div><b>${esc(u.fullName || u.username)}</b> <span class="sub">${esc(u.username)}</span></div>`
+        + (cur.has(u.username) ? '<span class="sub">already in</span>' : `<button class="btn small" data-wzadd="${esc(u.username)}" type="button">Add</button>`) + '</div>').join('')
+        || '<p class="muted">Nobody found. Their account must exist in the CUSEC Hub community organization.</p>';
+    } catch (e) { $('wz-user-results').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
+  }, 350);
+}
+async function wzMember(username, add) {
+  const gid = wzRow().GroupId;
+  if (!add && !confirm(`Remove ${username}? They will stop seeing this audience's records.`)) return;
+  try {
+    const r = await rest(sharing(`community/groups/${gid}/${add ? 'addUsers' : 'removeUsers'}`), { users: username }, true);
+    const failed = add ? r.notAdded : r.notRemoved;
+    if (failed && failed.length) throw new Error(`${add ? 'Could not add' : 'Could not remove'} ${failed.join(', ')}. Adding people needs an organization administrator.`);
+    wzSay('ok', `${add ? 'Added' : 'Removed'} <b>${esc(username)}</b>.`);
+    await wzLoadMembers(); wzSearch(); drawAudiences();
+  } catch (e) { wzSay('err', esc(e.message)); }
+}
+
+// Step 4: data view
+function wzView(r) {
+  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
+  const c = counts[r[accessOid]], src = fullItemInfo[CONFIG.rvsItemId];
+  const canCreate = me.role === 'org_admin' || (src && src.owner === me.username);
+  let html = `<h3>The data this group can open</h3>
+    <p class="muted">A <b>view</b> is a filtered copy of the RVS layer. This one will show ${describeAudience(r)}
+    ${typeof c === 'number' ? `(<b>${c}</b> record${c === 1 ? '' : 's'} today)` : ''}, and only members of the group can open it.</p>`;
+  if (!vid || v?.missing) {
+    html += `<div class="big-status todo">No view yet.</div>`
+      + (canCreate ? `<button class="btn" id="wz-create-view" type="button">Create the view</button>`
+         : `<p class="warn">Only <b>${esc(src?.owner || 'the owner of the RVS layer')}</b> or an organization administrator can create views of the RVS layer. Sign in as them to do this step.</p>`)
+      + `<p class="muted" style="margin-top:10px">Already made one? Paste its item ID: <input id="wz-view-id" placeholder="32-character item id" style="width:300px"> <button class="btn plain small" id="wz-use-view" type="button">Use it</button></p>`;
+  } else {
+    html += `<div class="big-status ok">✓ View ready: <a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a></div>`;
+    if (viewShares[vid] && !viewShares[vid].includes(gid))
+      html += `<div class="big-status warn">The view isn't shared with the group yet, so its members can't open it.
+        <button class="btn small" id="wz-share-view" type="button">Share it with the group</button></div>`;
+  }
+  if (fullShares[gid]) {
+    html += `<div class="big-status warn" style="display:block"><b>This group can still open the full RVS layer</b>
+      (${esc(fullShares[gid].join(', '))}), which shows <b>all</b> records, including private clients'.<br>
+      <span class="muted">Stop sharing it only once this group's dashboard and apps use the view above; otherwise they'll lose access to their data.</span><br>
+      <button class="btn danger small" id="wz-unshare-full" type="button" style="margin-top:8px">Stop sharing the full RVS layer with this group</button></div>`;
+  }
+  return html;
+}
+async function wzCreateView() {
+  const r = wzRow(); wz.busy = true; $('wz-next').disabled = true;
+  wzSay('ok', '<span class="spinner"></span>Creating the view (this takes a few seconds)…');
+  try {
+    const vid = await createView(r);
+    await writeRow({ ViewItemId: vid }, r[accessOid]);
+    await checkAudiences();
+    wzSay('ok', `Created and shared the view. <b>${esc(counts[r[accessOid]] ?? '?')}</b> records are visible in it.`);
+    $('wz-body').innerHTML = wzView(wzRow());
+  } catch (e) { wzSay('err', 'Could not create the view: ' + esc(e.message)); }
+  finally { wz.busy = false; $('wz-next').disabled = false; }
+}
+async function createView(r) {
+  const where = audienceWhere(r); if (!where) throw new Error('This audience has no filter yet (step 1).');
+  const src = await rest(sharing(`content/items/${CONFIG.rvsItemId}`));
+  const svcUrl = src.url.replace(/\/+$/, '').replace(/\/\d+$/, '');
+  const m = svcUrl.match(/\/rest\/services\/(.+)\/FeatureServer$/i);
+  if (!m) throw new Error('Unexpected RVS layer URL: ' + svcUrl);
+  const srcName = m[1];
+  const [svc, lyr] = await Promise.all([rest(svcUrl), rest(`${svcUrl}/${CONFIG.rvsLayerIndex}`)]);
+  // a free, readable service name
+  const base = ('RVS_' + slug(r.AccessName) + '_view').replace(/_+/g, '_').slice(0, 80);
+  let name = base;
+  for (let i = 2; i < 30; i++) {
+    const a = await rest(sharing(`portals/${me.orgId}/isServiceNameAvailable`), { name, type: 'Feature Service' });
+    if (a.available) break; name = `${base}_${i}`;
+  }
+  const created = await rest(sharing(`content/users/${me.username}/createService`), {
+    outputType: 'featureService', isView: 'true',
+    createParameters: JSON.stringify({ name, isView: true, sourceSchemaChanged: true, isUpdatableView: false, capabilities: 'Query',
+      spatialReference: svc.spatialReference, initialExtent: svc.initialExtent || svc.fullExtent, allowGeometryUpdates: false, hasStaticData: false }),
+  }, true);
+  if (!created.itemId || !created.serviceurl) throw new Error('ArcGIS did not create the view service.');
+  const adminUrl = created.serviceurl.replace('/rest/services/', '/rest/admin/services/');
+  await rest(`${adminUrl}/addToDefinition`, { addToDefinition: JSON.stringify({ layers: [{
+    adminLayerInfo: { viewLayerDefinition: { sourceServiceName: srcName, sourceLayerId: CONFIG.rvsLayerIndex, sourceLayerFields: '*' } }, name: lyr.name }] }) }, true);
+  await rest(`${adminUrl}/0/updateDefinition`, { updateDefinition: JSON.stringify({ viewDefinitionQuery: where }) }, true);
+  await rest(sharing(`content/users/${me.username}/items/${created.itemId}/update`), {
+    title: `RVS - ${r.AccessName} (view)`, tags: 'RVS,RVS Access', snippet: `RVS records for ${r.AccessName} only. Filter: ${where}. Made by RVS Access Admin.` }, true);
+  if (r.GroupId) await rest(sharing(`content/users/${me.username}/items/${created.itemId}/share`), { groups: r.GroupId, everyone: 'false', org: 'false' }, true);
+  viewInfo[created.itemId] = { title: `RVS - ${r.AccessName} (view)`, owner: me.username };
+  return created.itemId;
+}
+async function wzShareView() {
+  const r = wzRow(), vid = r.ViewItemId, owner = viewInfo[vid]?.owner || me.username;
+  try {
+    await rest(sharing(`content/users/${owner}/items/${vid}/share`), { groups: r.GroupId, everyone: 'false', org: 'false' }, true);
+    await checkAudiences(); wzSay('ok', 'Shared the view with the group.'); $('wz-body').innerHTML = wzView(wzRow());
+  } catch (e) { wzSay('err', esc(e.message)); }
+}
+async function wzUnshareFull() {
+  const r = wzRow(), gid = r.GroupId, title = groupInfo[gid]?.title || 'this group';
+  if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after their dashboard and apps use the view, or they will lose access to their data.`)) return;
+  try {
+    for (const id of CONFIG.fullItems) {
+      const owner = fullItemInfo[id]?.owner; if (!owner) continue;
+      const groupsNow = await itemGroupIds(id); if (!groupsNow.includes(gid)) continue;
+      await rest(sharing(`content/users/${owner}/items/${id}/unshare`), { groups: gid }, true);
+    }
+    await checkAudiences(); wzSay('ok', `The full RVS layer is no longer shared with <b>${esc(title)}</b>.`); $('wz-body').innerHTML = wzView(wzRow());
+  } catch (e) { wzSay('err', 'Could not stop sharing: ' + esc(e.message) + ' (needs the layer\'s owner or an organization administrator).'); }
+}
+async function wzUseView() {
+  const id = $('wz-view-id').value.trim();
+  if (!/^[0-9a-f]{32}$/i.test(id)) { wzSay('err', 'An item ID is 32 letters and numbers.'); return; }
+  try { await writeRow({ ViewItemId: id }, wzRow()[accessOid]); await checkAudiences(); $('wz-body').innerHTML = wzView(wzRow()); }
+  catch (e) { wzSay('err', esc(e.message)); }
+}
+
+// Step 5: dashboard; step 6: done
+function wzDash(r) {
+  return `<h3>Dashboard (optional)</h3>
+    <p class="muted">If this audience has its own ArcGIS dashboard, paste its link. Point the dashboard's data at the view from the previous step.</p>
+    <input id="wz-dash" value="${esc(r.DashboardUrl || '')}" placeholder="https://…" style="margin-top:10px">`;
+}
+function wzDone(r) {
+  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), mem = (groupInfo[gid]?.members || []).length;
+  const item = (ok, text, fix) => `<li>${ok ? '<span class="ok">✓</span>' : '<span class="warn">○</span>'} ${text}${!ok && fix ? ` <button class="btn plain small" data-wzgo="${fix}" type="button">Fix</button>` : ''}</li>`;
+  return `<h3>${esc(r.AccessName)}</h3><ul class="checklist">
+    ${item(true, `Audience saved: sees ${describeAudience(r)}`)}
+    ${item(!!gid && !groupInfo[gid]?.missing, `Group: ${esc(groupInfo[gid]?.title || '-')}`, 2)}
+    ${item(mem > 1, `People: ${Math.max(mem - 1, 0)} besides the owner`, 3)}
+    ${item(!!vid && !viewInfo[vid]?.missing && !(viewShares[vid] && !viewShares[vid].includes(gid)), `Data view: ${esc(viewInfo[vid]?.title || '-')}, shared with the group`, 4)}
+    ${item(!fullShares[gid], 'The group can no longer open the full RVS layer', 4)}
+    ${item(!!r.DashboardUrl, r.DashboardUrl ? `<a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">Dashboard</a>` : 'Dashboard (optional)', 5)}
+  </ul>`;
+}
+
+async function wzNext() {
+  const r = wzRow(), s = wz.step;
+  $('wz-next').disabled = true;
+  try {
+    if (s === 1) {
+      const v = wzWhoValues(), errs = wzWhoErrors(v, r);
+      if (errs.length) { wzSay('err', errs.map(esc).join('<br>')); return; }
+      if (!r) v.Active = 'Yes';
+      wz.oid = await writeRow(v, r ? r[accessOid] : null);
+    } else if (s === 2) {
+      const mode = document.querySelector('input[name="wz-gmode"]:checked')?.value || 'new';
+      if (mode === 'new') {
+        const t = $('wz-newgroup').value.trim(); if (!t) { wzSay('err', 'Enter a name for the new group.'); return; }
+        const g = await createGroup(t, `RVS access: ${r.AccessName}`);
+        await writeRow({ GroupId: g.id, GroupName: g.title }, r[accessOid]);
+      } else if (mode === 'existing') {
+        const id = $('wz-existing').value; await writeRow({ GroupId: id, GroupName: groupInfo[id]?.title || null }, r[accessOid]);
+      }
+      wz.groupMode = 'keep';
+    } else if (s === 5) {
+      const url = $('wz-dash').value.trim();
+      if (url && !/^https:\/\//i.test(url)) { wzSay('err', 'The dashboard link should start with https://'); return; }
+      await writeRow({ DashboardUrl: url }, r[accessOid]);
+    }
+    wz.step = s + 1; renderWizard();
+  } catch (e) { wzSay('err', esc(e.message)); }
+  finally { $('wz-next').disabled = false; }
+}
+
 // ── Wiring ──────────────────────────────────────────────────────────────────
+$('wz-next').onclick = wzNext;
+$('wz-back').onclick = () => { wz.step = Math.max(1, wz.step - 1); renderWizard(); };
+$('wz-close').onclick = () => { if (!wz?.busy) $('wz-dialog').classList.add('hidden'); };
+$('wz-body').addEventListener('input', e => { if (e.target.closest('#wz-type, #wz-state, #wz-county, #wz-clientname, #wz-name, #wz-clientid')) {
+  if (e.target.id === 'wz-clientname' && !$('wz-clientid').readOnly) $('wz-clientid').value = slug(e.target.value);
+  wzWhoSync(); }
+  if (e.target.id === 'wz-user-search') wzSearch(); });
+$('wz-body').addEventListener('change', e => {
+  if (e.target.id === 'wz-type') wzWhoSync();
+  if (e.target.name === 'wz-gmode') { wz.groupMode = e.target.value; document.querySelectorAll('.choice').forEach(c => c.classList.toggle('on', c.contains(e.target))); }
+  if (e.target.id === 'wz-existing') { wz.groupMode = 'existing'; const radio = document.querySelector('input[value="existing"]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+});
+$('wz-body').addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'wz-create-view') wzCreateView();
+  if (t.id === 'wz-share-view') wzShareView();
+  if (t.id === 'wz-unshare-full') wzUnshareFull();
+  if (t.id === 'wz-use-view') wzUseView();
+  if (t.dataset.wzadd) wzMember(t.dataset.wzadd, true);
+  if (t.dataset.wzremove) wzMember(t.dataset.wzremove, false);
+  if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
+});
 $('auth-btn').onclick = () => token ? signOut() : signIn();
 $('gate-btn').onclick = signIn;
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
@@ -516,8 +897,12 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   $('tab-aud').classList.toggle('hidden', t.dataset.tab !== 'aud'); $('tab-grp').classList.toggle('hidden', t.dataset.tab !== 'grp');
 });
 $('aud-filter').oninput = drawAudiences; $('aud-inactive').onchange = drawAudiences;
-$('aud-refresh').onclick = loadAll; $('aud-add').onclick = () => openAudience(null);
-$('aud-rows').onclick = e => { const b = e.target.closest('[data-edit]'); if (b) openAudience(rows.find(r => String(r[accessOid]) === b.dataset.edit)); };
+$('aud-refresh').onclick = loadAll; $('aud-add').onclick = () => openWizard(null);
+$('aud-rows').onclick = e => {
+  const b = e.target.closest('[data-edit]'), s = e.target.closest('[data-setup]');
+  if (b) openAudience(rows.find(r => String(r[accessOid]) === b.dataset.edit));
+  if (s) openWizard(rows.find(r => String(r[accessOid]) === s.dataset.setup));
+};
 ['f-type', 'f-group', 'f-state', 'f-county', 'f-view'].forEach(id => $(id).addEventListener('input', syncForm));
 ['f-type', 'f-group'].forEach(id => $(id).addEventListener('change', syncForm));
 $('f-clientname').addEventListener('input', () => { if (!$('f-clientid').readOnly) { $('f-clientid').value = slug($('f-clientname').value); syncForm(); } if (!$('f-name').value) $('f-name').value = $('f-clientname').value; });

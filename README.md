@@ -1,46 +1,73 @@
 # RVS Access Admin
 
 A page for CUSEC staff to manage **who sees which RVS records**: the **RVS Access** table
-(item `994e5086fed6495dafec1c73f39b274d`) and the ArcGIS groups it points to, in the CUSEC Hub
-community org. See `../rvs-access/README.md` for the table and the access rule.
+(item `994e5086fed6495dafec1c73f39b274d`), the ArcGIS groups it points to, and each audience's
+filtered **view** of the RVS layer, in the CUSEC Hub community org. See `../rvs-access/README.md` for
+the table and the access rule. Live at **https://cusec-org.github.io/rvs-admin/**.
 
 Only members of **CUSEC RVS Management** (`47c04ff75e3d4635a9be3b10fd5f6897`) and organization
 administrators can use it. Everything is done with **your own ArcGIS sign-in**; nothing is stored.
 
-## What it does (first version)
+## Why views
 
-**Audiences tab**: one row per state, county or private client from the RVS Access table:
-- what records it covers, its group (with member count), its view and dashboard, and **how many RVS
-  records match** (CWL's Craighead buildings are excluded from the Craighead and Arkansas counts);
-- problem flags: no group/view yet, group or view not found, group with no members, no matching
-  records, Client ID used twice;
-- **Add / Edit** an audience: type, name, state/county or client name + Client ID (suggested from the
-  name, locked once saved), group (pick one, or **create a new group** in the same step), view item ID,
-  dashboard URL, active, notes. The form shows the **exact filter** to give that audience's view, and
-  refuses duplicates (same records already covered, Client ID already used).
-- Deactivate by setting **Active = No** (the row stays for history; it's hidden unless "Show inactive").
+The apps filter records for convenience, but if a group can open the **full** RVS layer, its members
+can still see every record (including private clients') in Map Viewer or the data table. A **view**
+is enforced by ArcGIS itself: it only ever returns its audience's records. So every State, County and
+Client group should open RVS data **only through its own view**, never the full layer.
 
-**Groups & members tab**: the org's groups (and which audience uses each), **New group**, and for a
-selected group: its members, **search users** in the org, **Add** and **Remove**.
+## Setting up an audience: the wizard
 
-**Not yet (next version)**: creating the filtered **view** itself. For now, make it in ArcGIS Online
-(RVS layer → *Create view layer*), paste the filter the app shows, share it only with the audience's
-group, then put the view's item ID in the audience.
+**Add audience** (or **Finish setup** on any audience that isn't complete) walks through six steps.
+Each step saves as it goes, so you can close it and pick up later.
+
+1. **Who**: Client, County or State, and its name. The Client ID is made for you (locked once saved).
+   The page says in plain words what this audience will see.
+2. **Group**: create a new ArcGIS group (a name is suggested) or use an existing one.
+3. **People**: search the organization and add the people who should see the records.
+4. **Data view**: one button, **Create the view**: makes a read-only view of the RVS layer with this
+   audience's filter, names it "RVS - *audience* (view)", shares it **only** with the group, and saves
+   it on the audience. It shows how many records the view returns as a sanity check.
+   If the group can still open the **full RVS layer** (true for the existing State and County groups
+   today), it says so and offers **Stop sharing the full RVS layer with this group**. Do that **only
+   after** that group's dashboard and apps use the new view, or its members lose access to their data.
+5. **Dashboard** (optional): paste the audience's dashboard link (point the dashboard at the view).
+6. **Done**: a checklist, with a **Fix** button next to anything still missing.
+
+**Edit** opens a single form for quick changes (names, notes, Active). Set **Active = No** to retire
+an audience (the row stays for history; hidden unless "Show inactive").
+
+## The Audiences list
+
+For each audience: what it covers, its group (and member count), its view and dashboard, **how many
+RVS records match** (CWL's Craighead buildings are excluded from the Craighead and Arkansas counts),
+and problem flags: no group / no view yet, group or view not found, view not shared with the group,
+**group can still open the full RVS layer**, group with no members, no matching records, Client ID
+used twice.
+
+**Groups & members** tab: the org's groups (and which audience uses each), **New group**, and for a
+selected group: its members, search users, **Add** and **Remove**.
 
 ## Permissions it relies on
 - Reading/writing the RVS Access table: CUSEC RVS Management (the table is shared with it and editable).
+- **Creating views** of the RVS layer: the **owner of the RVS layer** (item `307585a0…`) or an
+  **organization administrator**. Others see a note saying who can do that step.
+- **Stopping sharing** of the full RVS layer: its owner or an organization administrator.
 - Creating groups: your account's *create groups* privilege.
 - Adding / removing **other people** in a group: an **organization administrator** (or the group's
   owner/manager for removals). Without it, ArcGIS refuses and the app says so.
 
 ## Setup
-1. **ArcGIS app (done):** client ID **`7l8gKTdeHaruBBxx`** is set in `CONFIG.clientId` in `index.html`.
-   Its redirect URLs must include `https://cusec-org.github.io/rvs-admin/` exactly (Hub community org →
-   the app item → Settings → Redirect URLs).
-2. **Publish**: repo `cusec-org/rvs-admin`, `index.html` at the root, Settings → Pages → branch `main`,
-   folder `/ (root)` → `https://cusec-org.github.io/rvs-admin/`.
+1. **ArcGIS app (done):** client ID **`7l8gKTdeHaruBBxx`** in `CONFIG.clientId`; redirect URL
+   `https://cusec-org.github.io/rvs-admin/`.
+2. **Published:** repo `cusec-org/rvs-admin` → GitHub Pages (`main`, root).
+3. `CONFIG.fullItems` lists the items that expose **all** RVS records (the RVS layer `307585a0…` and the
+   read-only layer `70d1f24a…`). Add any other all-records item there so the full-layer check covers it.
 
 ## Tested
-Against a simulated ArcGIS backend (not the real org yet): non-admin refused; audiences list with
-correct record counts and flags; edit + create group in one step; group member add / remove; user
-search; duplicate-audience and duplicate-Client-ID checks; county/state input normalised.
+Against a simulated ArcGIS backend shaped like the real org (State/County groups sharing the full
+layer): non-admin refused; flags for full-layer access; the CWL wizard from "no group" to done (group
+created, member added, view created with `ClientId = 'jonesboro_cwl'`, shared only with the CWL group,
+45 records); Arkansas: full-layer sharing removed from the Arkansas group only (CUSEC RVS Management
+kept it); a new Tennessee audience end to end; duplicate checks; real-style save responses.
+On the real org: sign-in and loading the table and 87 groups. **View creation hasn't run on the real
+org yet**; the first real run is the CWL view.
