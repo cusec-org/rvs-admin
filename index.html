@@ -1,1 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RVS Access Admin</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #1a2332; --blue: #2d6be4; --blue-lt: #e8f0fd; --green: #1a9e5c; --green-lt: #e6f5ed;
+    --amber: #b86e0b; --amber-lt: #fdf2e1; --bad: #b3261e; --bad-lt: #fdeceb;
+    --surface: #f5f6f8; --card: #fff; --border: #e2e5ea; --text: #1a2332; --text-2: #5a6474; --text-3: #8a92a0;
+    --radius: 10px; --shadow: 0 1px 4px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--surface); color: var(--text); min-height: 100vh; font-size: 14px; }
+  header { background: var(--navy); color: #fff; padding: 0 24px; display: flex; align-items: center; gap: 14px; height: 60px; position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  header img { height: 40px; width: auto; }
+  header h1 { font-size: 16px; font-weight: 600; flex: 1; }
+  #user-name { font-size: 13px; opacity: .85; }
+  .btn { padding: 8px 16px; border-radius: 7px; border: 0; background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.ghost { background: transparent; border: 1.5px solid rgba(255,255,255,.4); color: #fff; padding: 6px 14px; font-weight: 500; }
+  .btn.plain { background: #fff; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  .btn.small { padding: 4px 10px; font-size: 12.5px; }
+  .btn.danger { background: #fff; color: var(--bad); border: 1px solid #f0c8c4; font-weight: 500; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 16px; }
+  h2 { font-size: 17px; margin-bottom: 6px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; }
+  p, .muted { color: var(--text-2); line-height: 1.5; }
+  .muted { font-size: 13px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab { padding: 8px 16px; border-radius: 99px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-weight: 600; color: var(--text-2); }
+  .tab.on { background: var(--blue-lt); border-color: var(--blue); color: var(--blue); }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar input[type=search] { flex: 1; min-width: 200px; }
+  input, select, textarea { font: inherit; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); width: 100%; }
+  textarea { min-height: 60px; resize: vertical; }
+  .tbl-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
+  th { color: var(--text-2); font-weight: 600; background: #fafbfc; white-space: nowrap; }
+  tr.inactive td { opacity: .55; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .t-State { background: #ede7fb; color: #5b3cc4; } .t-County { background: var(--blue-lt); color: var(--blue); } .t-Client { background: var(--amber-lt); color: var(--amber); }
+  .ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--bad); }
+  .flags { margin: 0; padding-left: 16px; font-size: 12.5px; }
+  .sub { color: var(--text-3); font-size: 12px; }
+  code, .code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; background: #f2f4f7; padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; line-height: 1.45; }
+  .banner.err { background: var(--bad-lt); color: var(--bad); } .banner.ok { background: var(--green-lt); color: var(--green); } .banner.warn { background: var(--amber-lt); color: var(--amber); }
+  .hidden { display: none !important; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  .grid label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin-bottom: 3px; }
+  .grid .full { grid-column: 1 / -1; }
+  .hint { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .member { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .member:last-child { border-bottom: 0; }
+  .row-click { cursor: pointer; } .row-click:hover td { background: #f7f9fc; } .row-click.sel td { background: var(--blue-lt); }
+  .dialog-bg { position: fixed; inset: 0; background: rgba(15,22,35,.45); z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; }
+  .dialog { background: #fff; border-radius: 12px; max-width: 760px; width: 100%; padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+  .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+  .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 760px) { .grid, .split { grid-template-columns: 1fr; } header { padding: 0 16px; } #user-name { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="https://cusec.org/wp-content/uploads/cropped-cusec_logo_512-270x270.png" alt="CUSEC" />
+  <h1>RVS Access Admin</h1>
+  <span id="user-name"></span>
+  <button class="btn ghost" id="auth-btn" type="button">Sign In</button>
+</header>
 
+<main>
+  <div id="msg"></div>
+
+  <section class="card" id="gate">
+    <h2>Sign in with your CUSEC ArcGIS account</h2>
+    <p>Manage who sees which RVS records: states, counties and private clients, their ArcGIS groups and members.
+       For members of <b>CUSEC RVS Management</b> and organization administrators.</p>
+    <div class="actions" style="justify-content:flex-start"><button class="btn" id="gate-btn" type="button">Sign In</button></div>
+  </section>
+
+  <div id="app" class="hidden">
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="aud" role="tab" type="button">Audiences</button>
+      <button class="tab" data-tab="grp" role="tab" type="button">Groups &amp; members</button>
+    </div>
+
+    <!-- Audiences: the RVS Access table -->
+    <section class="card" id="tab-aud">
+      <div class="toolbar">
+        <input type="search" id="aud-filter" placeholder="Filter by name, state, county, client or group…" />
+        <label class="muted"><input type="checkbox" id="aud-inactive" style="width:auto"> Show inactive</label>
+        <button class="btn plain" id="aud-refresh" type="button">Refresh</button>
+        <button class="btn" id="aud-add" type="button">Add audience</button>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Type</th><th>Audience</th><th>Sees records where</th><th>Group</th><th>View</th><th>Records</th><th>Status</th><th></th></tr></thead>
+        <tbody id="aud-rows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
+      </table></div>
+      <p class="muted" style="margin-top:10px">One row per state, county or private client. A person sees the records of every active row whose group they belong to;
+        members of CUSEC RVS Management see everything. State and County rows only cover records with a blank <code>ClientId</code>.</p>
+    </section>
+
+    <!-- Groups & members -->
+    <section class="hidden" id="tab-grp">
+      <div class="split">
+        <div class="card">
+          <div class="toolbar">
+            <input type="search" id="grp-filter" placeholder="Filter groups…" />
+            <button class="btn" id="grp-new" type="button">New group</button>
+          </div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Group</th><th>Access</th><th>Used by</th></tr></thead>
+            <tbody id="grp-rows"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+        <div class="card" id="members-card">
+          <h2 id="mem-title">Members</h2>
+          <p class="muted" id="mem-hint">Choose a group to see and change its members.</p>
+          <div id="mem-body" class="hidden">
+            <div class="toolbar" style="margin-top:10px">
+              <input type="search" id="user-search" placeholder="Find a user in the organization (name or username)…" />
+            </div>
+            <div id="user-results"></div>
+            <h3>Current members</h3>
+            <div id="mem-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- Add / edit audience -->
+<div class="dialog-bg hidden" id="aud-dialog" role="dialog" aria-modal="true" aria-labelledby="aud-dlg-title">
+  <div class="dialog">
+    <h2 id="aud-dlg-title">Add audience</h2>
+    <div id="aud-dlg-msg"></div>
+    <div class="grid">
+      <div><label for="f-type">Type</label>
+        <select id="f-type"><option>Client</option><option>County</option><option>State</option></select></div>
+      <div><label for="f-active">Active</label>
+        <select id="f-active"><option>Yes</option><option>No</option></select></div>
+      <div class="full"><label for="f-name">Audience name</label><input id="f-name" placeholder="e.g. Jonesboro CWL, Craighead County, AR, Arkansas" /></div>
+      <div><label for="f-state">State (2 letters)</label><input id="f-state" maxlength="2" placeholder="AR" /></div>
+      <div class="only-county"><label for="f-county">County (as stored on RVS records, no “County”)</label><input id="f-county" placeholder="Craighead" /></div>
+      <div class="only-client"><label for="f-clientname">Client name (shown in apps and reports)</label><input id="f-clientname" placeholder="Jonesboro CWL" /></div>
+      <div class="only-client"><label for="f-clientid">Client ID (key on RVS records)</label><input id="f-clientid" placeholder="jonesboro_cwl" />
+        <div class="hint" id="clientid-hint">Lowercase letters, numbers and _ only. Can't be changed once records use it.</div></div>
+      <div class="full"><label for="f-group">Group</label>
+        <select id="f-group"></select>
+        <div class="hint">Members of this group see this audience's records. Choose “Create a new group” to make one now.</div></div>
+      <div class="full hidden" id="newgroup-row"><label for="f-newgroup">New group title</label><input id="f-newgroup" />
+        <div class="hint">Created in your organization, invitation only, visible to the organization; you'll be its owner.</div></div>
+      <div><label for="f-view">View item ID</label><input id="f-view" placeholder="32-character item id" />
+        <div class="hint" id="view-hint"></div></div>
+      <div><label for="f-dash">Dashboard URL</label><input id="f-dash" placeholder="https://…" /></div>
+      <div class="full"><label>Filter for this audience's view</label>
+        <div class="code" id="f-filter">-</div>
+        <div class="hint">When you create the view (RVS layer → Create view layer), set this as its filter and share it only with the group above.</div></div>
+      <div class="full"><label for="f-notes">Notes</label><textarea id="f-notes"></textarea></div>
+    </div>
+    <div class="actions">
+      <button class="btn plain" id="aud-cancel" type="button">Cancel</button>
+      <button class="btn" id="aud-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- New group -->
+<div class="dialog-bg hidden" id="grp-dialog" role="dialog" aria-modal="true" aria-labelledby="grp-dlg-title">
+  <div class="dialog" style="max-width:520px">
+    <h2 id="grp-dlg-title">New group</h2>
+    <div id="grp-dlg-msg"></div>
+    <div class="grid">
+      <div class="full"><label for="g-title">Title</label><input id="g-title" placeholder="e.g. RVS Client - Jonesboro CWL" /></div>
+      <div class="full"><label for="g-desc">Summary</label><input id="g-desc" placeholder="Who this group is for" /></div>
+    </div>
+    <p class="muted" style="margin-top:10px">Invitation only, visible to the organization. You'll be the owner.</p>
+    <div class="actions">
+      <button class="btn plain" id="grp-cancel" type="button">Cancel</button>
+      <button class="btn" id="grp-save" type="button">Create group</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Configuration ───────────────────────────────────────────────────────────
+const CONFIG = {
+  clientId: '7l8gKTdeHaruBBxx',                       // this app's own ArcGIS app (OAuth credentials); see README
+  portal: 'https://www.arcgis.com',
+  orgUrl: 'https://cusec-hub.maps.arcgis.com',        // CUSEC Hub community org (links to groups/items)
+  accessItemId: '994e5086fed6495dafec1c73f39b274d',   // RVS Access table
+  accessLayerIndex: 0,
+  adminGroupId: '47c04ff75e3d4635a9be3b10fd5f6897',   // CUSEC RVS Management: may use this app, sees everything
+  rvsItemId: '307585a0e7ed4c59aa94cb3c08c9ccfb',      // RVS layer, for record counts per audience
+  rvsLayerIndex: 0,
+};
+const TOKEN_KEY = 'rvs_admin_token';
+const NEW_GROUP = '__new__';
+
+// ── State ───────────────────────────────────────────────────────────────────
+let token = null, me = null;
+let accessUrl = null, accessOid = 'ObjectId', rows = [];
+let rvsUrl = null;
+let groups = [];                       // org groups (id, title, access, owner)
+const groupInfo = {};                  // id -> {title, access, owner, members|null, missing}
+const viewInfo = {};                   // itemId -> {title, type, missing}
+const counts = {};                     // objectid -> number | 'err'
+let editing = null, selGroup = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sqlStr = s => "'" + String(s ?? '').replace(/'/g, "''") + "'";
+function say(kind, html, where = 'msg') { $(where).innerHTML = html ? `<div class="banner ${kind}" role="status">${html}</div>` : ''; }
+
+// ── ArcGIS REST ─────────────────────────────────────────────────────────────
+async function rest(url, params = {}, post = false) {
+  const body = new URLSearchParams({ f: 'json', token, ...params });
+  const res = await fetch(post ? url : `${url}?${body}`, post ? { method: 'POST', body } : {});
+  const j = await res.json();
+  if (j.error) {
+    if ([498, 499].includes(j.error.code)) { signOut(); throw new Error('Your sign-in expired. Please sign in again.'); }
+    const e = new Error(j.error.message || 'ArcGIS request failed'); e.code = j.error.code; throw e;
+  }
+  return j;
+}
+const sharing = path => `${CONFIG.portal}/sharing/rest/${path}`;
+async function itemUrl(id, index) { const it = await rest(sharing(`content/items/${id}`)); return `${it.url.replace(/\/+$/, '')}/${index}`; }
+
+// ── Sign-in (OAuth implicit flow, same pattern as the other RVS pages) ──────
+const inIframe = () => { try { return window.self !== window.top; } catch { return true; } };
+const redirectUri = () => window.location.href.split('#')[0].split('?')[0];
+function signIn() {
+  if (CONFIG.clientId === 'YOUR_CLIENT_ID_HERE') { say('err', 'This page is not set up yet: set CONFIG.clientId (see README).'); return; }
+  const url = `${CONFIG.portal}/sharing/rest/oauth2/authorize?client_id=${encodeURIComponent(CONFIG.clientId)}`
+    + `&response_type=token&expiration=120&redirect_uri=${encodeURIComponent(redirectUri())}`;
+  if (inIframe()) {
+    const w = 540, h = 700;
+    if (!window.open(url, 'rvs_admin_oauth', `width=${w},height=${h},left=${(screen.width - w) / 2},top=${(screen.height - h) / 2}`))
+      alert('The sign-in popup was blocked. Allow popups for this site and try again.');
+  } else window.location.href = url;
+}
+function signOut() {
+  token = null; me = null; try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) {}
+  $('user-name').textContent = ''; $('auth-btn').textContent = 'Sign In';
+  $('gate').classList.remove('hidden'); $('app').classList.add('hidden');
+}
+async function completeSignIn(tok) {
+  token = tok; try { sessionStorage.setItem(TOKEN_KEY, tok); } catch (_) {}
+  $('auth-btn').textContent = 'Sign Out'; $('gate').classList.add('hidden');
+  say('ok', '<span class="spinner"></span>Checking your account…');
+  try {
+    me = await rest(sharing('community/self'));
+    const isAdmin = me.role === 'org_admin' || (me.groups || []).some(g => g.id === CONFIG.adminGroupId);
+    if (!isAdmin) { say('err', `Signed in as ${esc(me.username)}, who is not in <b>CUSEC RVS Management</b>. Ask an administrator to add you.`); return; }
+    $('user-name').textContent = me.fullName || me.username;
+    say(); $('app').classList.remove('hidden');
+    await loadAll();
+  } catch (e) { say('err', esc(e.message)); if (!token) $('gate').classList.remove('hidden'); }
+}
+
+// ── Loading ─────────────────────────────────────────────────────────────────
+async function loadAll() {
+  say('ok', '<span class="spinner"></span>Loading the RVS Access table and groups…');
+  try {
+    accessUrl = accessUrl || await itemUrl(CONFIG.accessItemId, CONFIG.accessLayerIndex);
+    const info = await rest(accessUrl);
+    accessOid = info.objectIdField || (info.fields || []).find(f => f.type === 'esriFieldTypeOID')?.name || accessOid;
+    const q = await rest(`${accessUrl}/query`, { where: '1=1', outFields: '*', orderByFields: 'AccessType,AccessName', returnGeometry: 'false' });
+    rows = (q.features || []).map(f => f.attributes);
+    await loadGroups();
+    say(); drawAudiences(); drawGroups();
+    checkAudiences();                                  // group / view / record checks fill in as they arrive
+  } catch (e) { say('err', 'Could not load: ' + esc(e.message)); }
+}
+async function loadGroups() {
+  const out = []; let start = 1;
+  do {
+    const r = await rest(sharing('community/groups'), { q: `orgid:${me.orgId}`, sortField: 'title', sortOrder: 'asc', num: 100, start });
+    out.push(...(r.results || [])); start = r.nextStart;
+  } while (start && start > 0);
+  groups = out.map(g => ({ id: g.id, title: g.title, access: g.access, owner: g.owner }));
+  groups.forEach(g => { groupInfo[g.id] = Object.assign(groupInfo[g.id] || {}, g); });
+}
+async function groupMembers(id, force) {
+  if (!force && groupInfo[id] && groupInfo[id].members) return groupInfo[id].members;
+  const u = await rest(sharing(`community/groups/${id}/users`));
+  const members = [...new Set([u.owner, ...(u.admins || []), ...(u.users || [])].filter(Boolean))]
+    .map(name => ({ username: name, role: name === u.owner ? 'owner' : (u.admins || []).includes(name) ? 'manager' : 'member' }));
+  groupInfo[id] = Object.assign(groupInfo[id] || { id }, { members });
+  return members;
+}
+async function checkAudiences() {
+  if (!rvsUrl) { try { rvsUrl = await itemUrl(CONFIG.rvsItemId, CONFIG.rvsLayerIndex); } catch (_) { rvsUrl = null; } }
+  await Promise.all(rows.map(async r => {
+    const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
+    if (gid && !groupInfo[gid]?.title) {
+      try { const g = await rest(sharing(`community/groups/${gid}`)); groupInfo[gid] = Object.assign(groupInfo[gid] || {}, { id: gid, title: g.title, access: g.access, owner: g.owner }); }
+      catch (_) { groupInfo[gid] = { id: gid, missing: true }; }
+    }
+    if (gid && !groupInfo[gid].missing) { try { await groupMembers(gid); } catch (_) {} }
+    if (vid && !viewInfo[vid]) {
+      try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type }; }
+      catch (_) { viewInfo[vid] = { missing: true }; }
+    }
+    if (rvsUrl && audienceWhere(r)) {
+      try { const c = await rest(`${rvsUrl}/query`, { where: audienceWhere(r), returnCountOnly: 'true' }); counts[r[accessOid]] = c.count; }
+      catch (_) { counts[r[accessOid]] = 'err'; }
+    }
+    drawAudiences();
+  }));
+}
+
+// ── Access rule ─────────────────────────────────────────────────────────────
+const BLANK_CLIENT = "(ClientId IS NULL OR ClientId = '')";
+function audienceWhere(r) {
+  const st = (r.State || '').trim().toUpperCase(), co = (r.County || '').trim(), cid = (r.ClientId || '').trim();
+  if (r.AccessType === 'Client') return cid ? `ClientId = ${sqlStr(cid)}` : '';
+  if (r.AccessType === 'County') return st && co ? `State = ${sqlStr(st)} AND County = ${sqlStr(co)} AND ${BLANK_CLIENT}` : '';
+  if (r.AccessType === 'State') return st ? `State = ${sqlStr(st)} AND ${BLANK_CLIENT}` : '';
+  return '';
+}
+function problems(r) {
+  const p = [], gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
+  if (!audienceWhere(r)) p.push(['bad', r.AccessType === 'Client' ? 'No Client ID' : r.AccessType === 'County' ? 'Needs State and County' : 'Needs State']);
+  if (!gid) p.push(['warn', 'No group yet']);
+  else if (groupInfo[gid]?.missing) p.push(['bad', 'Group not found (deleted, or you can\'t see it)']);
+  else if (groupInfo[gid]?.members && groupInfo[gid].members.length <= 1) p.push(['warn', 'Group has no members besides its owner']);
+  if (!vid) p.push(['warn', 'No view yet']);
+  else if (viewInfo[vid]?.missing) p.push(['bad', 'View not found']);
+  if (counts[r[accessOid]] === 0) p.push(['warn', 'No RVS records match']);
+  if (r.AccessType === 'Client' && rows.some(o => o !== r && (o.ClientId || '').trim() && o.ClientId === r.ClientId)) p.push(['bad', 'Client ID used by another row']);
+  return p;
+}
+
+// ── Audiences table ─────────────────────────────────────────────────────────
+function drawAudiences() {
+  const q = $('aud-filter').value.trim().toLowerCase(), showInactive = $('aud-inactive').checked;
+  const list = rows.filter(r => (showInactive || r.Active !== 'No')
+    && (!q || [r.AccessName, r.State, r.County, r.ClientId, r.ClientName, groupInfo[r.GroupId]?.title, r.GroupName].join(' ').toLowerCase().includes(q)));
+  $('aud-rows').innerHTML = list.map(r => {
+    const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), g = groupInfo[gid], v = viewInfo[vid];
+    const scope = r.AccessType === 'Client' ? `ClientId = <code>${esc(r.ClientId || '?')}</code>`
+      : r.AccessType === 'County' ? `${esc(r.County || '?')}, ${esc(r.State || '?')}<div class="sub">blank ClientId</div>` : `${esc(r.State || '?')}<div class="sub">blank ClientId</div>`;
+    const grp = !gid ? '<span class="warn">-</span>'
+      : g?.missing ? `<span class="bad">${esc(r.GroupName || gid)}</span>`
+      : `<a href="${CONFIG.orgUrl}/home/group.html?id=${esc(gid)}" target="_blank" rel="noopener">${esc(g?.title || r.GroupName || gid)}</a>`
+        + `<div class="sub">${g?.members ? g.members.length + ' member' + (g.members.length === 1 ? '' : 's') : '…'}</div>`;
+    const view = !vid ? '<span class="warn">-</span>' : v?.missing ? '<span class="bad">not found</span>'
+      : `<a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a>`
+        + (r.DashboardUrl ? `<div class="sub"><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">dashboard</a></div>` : '');
+    const c = counts[r[accessOid]];
+    const ps = problems(r);
+    const status = ps.length ? `<ul class="flags">${ps.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>` : '<span class="ok">OK</span>';
+    return `<tr class="${r.Active === 'No' ? 'inactive' : ''}"><td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td>`
+      + `<td><b>${esc(r.AccessName)}</b>${r.Active === 'No' ? '<div class="sub">inactive</div>' : ''}</td><td>${scope}</td><td>${grp}</td><td>${view}</td>`
+      + `<td>${c === undefined ? '…' : c === 'err' ? '<span class="sub">n/a</span>' : c}</td><td>${status}</td>`
+      + `<td><button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">No audiences yet. Use “Add audience”.</td></tr>';
+}
+
+// ── Add / edit audience ─────────────────────────────────────────────────────
+const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+function groupOptions(selected) {
+  return `<option value="">- None yet -</option><option value="${NEW_GROUP}">+ Create a new group…</option>`
+    + groups.map(g => `<option value="${esc(g.id)}" ${g.id === selected ? 'selected' : ''}>${esc(g.title)}</option>`).join('')
+    + (selected && !groups.some(g => g.id === selected) ? `<option value="${esc(selected)}" selected>${esc(selected)} (not found)</option>` : '');
+}
+function openAudience(r) {
+  editing = r || null;
+  $('aud-dlg-title').textContent = r ? `Edit: ${r.AccessName}` : 'Add audience'; say(null, '', 'aud-dlg-msg');
+  $('f-type').value = r?.AccessType || 'Client'; $('f-active').value = r?.Active === 'No' ? 'No' : 'Yes';
+  $('f-name').value = r?.AccessName || ''; $('f-state').value = r?.State || ''; $('f-county').value = r?.County || '';
+  $('f-clientname').value = r?.ClientName || ''; $('f-clientid').value = r?.ClientId || '';
+  $('f-group').innerHTML = groupOptions((r?.GroupId || '').trim()); $('f-newgroup').value = '';
+  $('f-view').value = r?.ViewItemId || ''; $('f-dash').value = r?.DashboardUrl || ''; $('f-notes').value = r?.Notes || '';
+  // A client ID that records may already use is locked; it is the key the views and exports filter on.
+  const lockId = !!(r && r.AccessType === 'Client' && (r.ClientId || '').trim());
+  $('f-clientid').readOnly = lockId; $('clientid-hint').textContent = lockId
+    ? "Locked: views and exports filter on this key. Change the Client name instead." : "Lowercase letters, numbers and _ only. Can't be changed once records use it.";
+  syncForm(); $('aud-dialog').classList.remove('hidden'); $('f-name').focus();
+}
+function formRow() {
+  return { AccessType: $('f-type').value, AccessName: $('f-name').value.trim(), State: $('f-state').value.trim().toUpperCase(),
+    County: $('f-type').value === 'County' ? $('f-county').value.trim().replace(/\s+(county|parish)$/i, '') : '',
+    ClientId: $('f-type').value === 'Client' ? $('f-clientid').value.trim() : '',
+    ClientName: $('f-type').value === 'Client' ? $('f-clientname').value.trim() : '',
+    ViewItemId: $('f-view').value.trim(), DashboardUrl: $('f-dash').value.trim(), Active: $('f-active').value, Notes: $('f-notes').value.trim() };
+}
+function syncForm() {
+  const t = $('f-type').value;
+  document.querySelectorAll('.only-county').forEach(e => e.classList.toggle('hidden', t !== 'County'));
+  document.querySelectorAll('.only-client').forEach(e => e.classList.toggle('hidden', t !== 'Client'));
+  $('newgroup-row').classList.toggle('hidden', $('f-group').value !== NEW_GROUP);
+  if ($('f-group').value === NEW_GROUP && !$('f-newgroup').value) $('f-newgroup').value = suggestGroupTitle();
+  const v = $('f-view').value.trim();
+  $('view-hint').textContent = v && !/^[0-9a-f]{32}$/i.test(v) ? 'An item id is 32 letters and numbers.' : (viewInfo[v]?.title ? viewInfo[v].title : '');
+  const w = audienceWhere(formRow()); $('f-filter').textContent = w || '- fill in the fields above -';
+}
+function suggestGroupTitle() {
+  const r = formRow();
+  return r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}` : `RVS State - ${r.AccessName || r.State}`;
+}
+function validate(r) {
+  const e = [];
+  if (!r.AccessName) e.push('Give the audience a name.');
+  if (!/^[A-Z]{2}$/.test(r.State) && !(r.AccessType === 'Client' && !r.State)) e.push('State must be a 2-letter code.');
+  if (r.AccessType === 'County' && !r.County) e.push('Enter the county.');
+  if (r.AccessType === 'Client') {
+    if (!/^[a-z0-9_]{2,60}$/.test(r.ClientId)) e.push('Client ID must be 2-60 lowercase letters, numbers or _.');
+    if (!r.ClientName) e.push('Enter the client name.');
+    if (rows.some(o => o !== editing && (o.ClientId || '') === r.ClientId)) e.push(`Client ID "${r.ClientId}" is already used by another audience.`);
+  }
+  const dup = rows.find(o => o !== editing && o.AccessType === r.AccessType && audienceWhere(o) && audienceWhere(o) === audienceWhere(r));
+  if (dup) e.push(`"${dup.AccessName}" already covers the same records.`);
+  if (r.ViewItemId && !/^[0-9a-f]{32}$/i.test(r.ViewItemId)) e.push('View item ID must be 32 letters and numbers.');
+  if ($('f-group').value === NEW_GROUP && !$('f-newgroup').value.trim()) e.push('Enter a title for the new group.');
+  return e;
+}
+async function saveAudience() {
+  const r = formRow(), errs = validate(r);
+  if (errs.length) { say('err', errs.map(esc).join('<br>'), 'aud-dlg-msg'); return; }
+  $('aud-save').disabled = true; say('ok', '<span class="spinner"></span>Saving…', 'aud-dlg-msg');
+  try {
+    let gid = $('f-group').value, gtitle = '';
+    if (gid === NEW_GROUP) {
+      const g = await createGroup($('f-newgroup').value.trim(), `RVS access: ${r.AccessName}`);
+      gid = g.id; gtitle = g.title;
+    } else gtitle = gid ? (groupInfo[gid]?.title || editing?.GroupName || '') : '';
+    const attrs = { ...r, GroupId: gid || null, GroupName: gtitle || null };
+    Object.keys(attrs).forEach(k => { if (attrs[k] === '') attrs[k] = null; });
+    const payload = editing ? { updates: JSON.stringify([{ attributes: { ...attrs, [accessOid]: editing[accessOid] } }]) }
+                            : { adds: JSON.stringify([{ attributes: attrs }]) };
+    const res = await rest(`${accessUrl}/applyEdits`, payload, true);
+    const out = (res.addResults || res.updateResults || [])[0];
+    if (!out || !out.success) throw new Error(out?.error?.description || 'The table did not accept the change.');
+    $('aud-dialog').classList.add('hidden');
+    const done = `${editing ? 'Updated' : 'Added'} <b>${esc(r.AccessName)}</b>.` + (!r.ViewItemId && audienceWhere(r)
+      ? ` Next: create its view with the filter <code>${esc(audienceWhere(r))}</code> and share it only with ${esc(gtitle || 'its group')}.` : '');
+    await loadAll();
+    say('ok', done);                                   // after the reload, which clears messages
+  } catch (e) { say('err', esc(e.message), 'aud-dlg-msg'); }
+  finally { $('aud-save').disabled = false; }
+}
+
+// ── Groups & members ────────────────────────────────────────────────────────
+async function createGroup(title, snippet) {
+  const res = await rest(sharing('community/createGroup'), { title, snippet: snippet || '', access: 'org', isInvitationOnly: 'true', tags: 'RVS', sortField: 'title', sortOrder: 'asc' }, true);
+  const g = res.group || res; if (!g.id) throw new Error('The group was not created.');
+  groups.push({ id: g.id, title: g.title || title, access: g.access || 'org', owner: me.username });
+  groupInfo[g.id] = { id: g.id, title: g.title || title, access: 'org', owner: me.username };
+  groups.sort((a, b) => a.title.localeCompare(b.title));
+  return groupInfo[g.id];
+}
+function usedBy(gid) { return rows.filter(r => (r.GroupId || '').trim() === gid).map(r => r.AccessName); }
+function drawGroups() {
+  const q = $('grp-filter').value.trim().toLowerCase();
+  $('grp-rows').innerHTML = groups.filter(g => !q || g.title.toLowerCase().includes(q)).map(g => {
+    const u = usedBy(g.id);
+    return `<tr class="row-click ${g.id === selGroup ? 'sel' : ''}" data-group="${esc(g.id)}"><td><b>${esc(g.title)}</b><div class="sub">owner ${esc(g.owner)}</div></td>`
+      + `<td>${esc(g.access)}</td><td>${u.length ? esc(u.join(', ')) : '<span class="sub">-</span>'}</td></tr>`;
+  }).join('') || '<tr><td colspan="3" class="muted">No groups match.</td></tr>';
+}
+async function selectGroup(id) {
+  selGroup = id; drawGroups();
+  const g = groupInfo[id] || {};
+  $('mem-title').textContent = g.title || 'Members'; $('mem-hint').innerHTML = `<a href="${CONFIG.orgUrl}/home/group.html?id=${esc(id)}" target="_blank" rel="noopener">Open in ArcGIS Online</a>`
+    + (usedBy(id).length ? ` · used by ${esc(usedBy(id).join(', '))}` : '');
+  $('mem-body').classList.remove('hidden'); $('user-results').innerHTML = ''; $('user-search').value = '';
+  $('mem-list').innerHTML = '<p class="muted"><span class="spinner"></span>Loading…</p>';
+  try { drawMembers(await groupMembers(id, true)); } catch (e) { $('mem-list').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
+}
+function drawMembers(list) {
+  $('mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span></div>`
+    + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-remove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('')
+    || '<p class="muted">No members.</p>';
+}
+let searchTimer = null;
+function searchUsers() {
+  clearTimeout(searchTimer);
+  const q = $('user-search').value.trim();
+  if (q.length < 2) { $('user-results').innerHTML = ''; return; }
+  searchTimer = setTimeout(async () => {
+    try {
+      const r = await rest(sharing('community/users'), { q: `${q.replace(/[^\w.@ -]/g, '')} AND orgid:${me.orgId}`, num: 20 });
+      const current = new Set((groupInfo[selGroup]?.members || []).map(m => m.username));
+      $('user-results').innerHTML = (r.results || []).map(u => `<div class="member"><div><b>${esc(u.fullName || u.username)}</b> <span class="sub">${esc(u.username)}</span></div>`
+        + (current.has(u.username) ? '<span class="sub">member</span>' : `<button class="btn small" data-add="${esc(u.username)}" type="button">Add</button>`) + '</div>').join('')
+        || '<p class="muted">No users found in the organization.</p>';
+    } catch (e) { $('user-results').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
+  }, 350);
+}
+async function changeMember(username, add) {
+  if (!add && !confirm(`Remove ${username} from ${groupInfo[selGroup]?.title || 'this group'}? They will stop seeing that audience's records.`)) return;
+  try {
+    const r = await rest(sharing(`community/groups/${selGroup}/${add ? 'addUsers' : 'removeUsers'}`), { users: username }, true);
+    const failed = add ? r.notAdded : r.notRemoved;
+    if (failed && failed.length) throw new Error(`${add ? 'Could not add' : 'Could not remove'} ${failed.join(', ')}. Adding people directly needs an organization administrator.`);
+    say('ok', `${add ? 'Added' : 'Removed'} <b>${esc(username)}</b> ${add ? 'to' : 'from'} ${esc(groupInfo[selGroup]?.title || 'the group')}.`);
+    drawMembers(await groupMembers(selGroup, true)); searchUsers(); drawAudiences();
+  } catch (e) { say('err', esc(e.message)); }
+}
+
+// ── Wiring ──────────────────────────────────────────────────────────────────
+$('auth-btn').onclick = () => token ? signOut() : signIn();
+$('gate-btn').onclick = signIn;
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  $('tab-aud').classList.toggle('hidden', t.dataset.tab !== 'aud'); $('tab-grp').classList.toggle('hidden', t.dataset.tab !== 'grp');
+});
+$('aud-filter').oninput = drawAudiences; $('aud-inactive').onchange = drawAudiences;
+$('aud-refresh').onclick = loadAll; $('aud-add').onclick = () => openAudience(null);
+$('aud-rows').onclick = e => { const b = e.target.closest('[data-edit]'); if (b) openAudience(rows.find(r => String(r[accessOid]) === b.dataset.edit)); };
+['f-type', 'f-group', 'f-state', 'f-county', 'f-view'].forEach(id => $(id).addEventListener('input', syncForm));
+['f-type', 'f-group'].forEach(id => $(id).addEventListener('change', syncForm));
+$('f-clientname').addEventListener('input', () => { if (!$('f-clientid').readOnly) { $('f-clientid').value = slug($('f-clientname').value); syncForm(); } if (!$('f-name').value) $('f-name').value = $('f-clientname').value; });
+$('f-clientid').addEventListener('input', syncForm);
+$('aud-cancel').onclick = () => $('aud-dialog').classList.add('hidden'); $('aud-save').onclick = saveAudience;
+$('grp-filter').oninput = drawGroups;
+$('grp-rows').onclick = e => { const tr = e.target.closest('[data-group]'); if (tr) selectGroup(tr.dataset.group); };
+$('grp-new').onclick = () => { $('g-title').value = ''; $('g-desc').value = ''; say(null, '', 'grp-dlg-msg'); $('grp-dialog').classList.remove('hidden'); $('g-title').focus(); };
+$('grp-cancel').onclick = () => $('grp-dialog').classList.add('hidden');
+$('grp-save').onclick = async () => {
+  const t = $('g-title').value.trim(); if (!t) { say('err', 'Enter a title.', 'grp-dlg-msg'); return; }
+  $('grp-save').disabled = true;
+  try { const g = await createGroup(t, $('g-desc').value.trim()); $('grp-dialog').classList.add('hidden'); drawGroups(); selectGroup(g.id); say('ok', `Created <b>${esc(g.title)}</b>.`); }
+  catch (e) { say('err', esc(e.message), 'grp-dlg-msg'); } finally { $('grp-save').disabled = false; }
+};
+$('user-search').oninput = searchUsers;
+$('members-card').onclick = e => { const a = e.target.closest('[data-add]'), r = e.target.closest('[data-remove]'); if (a) changeMember(a.dataset.add, true); if (r) changeMember(r.dataset.remove, false); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.dialog-bg').forEach(d => d.classList.add('hidden')); });
+
+(function init() {
+  const h = new URLSearchParams(window.location.hash.slice(1)), tok = h.get('access_token');
+  if (tok) {
+    history.replaceState(null, '', redirectUri());
+    if (window.opener && window.opener !== window) {
+      try { window.opener.postMessage({ type: 'rvs_admin_oauth', access_token: tok }, window.location.origin); window.close(); return; } catch (_) {}
+    }
+    completeSignIn(tok); return;
+  }
+  if (h.get('error')) say('err', 'Sign-in was cancelled or failed. Try again.');
+  window.addEventListener('message', e => { if (e.origin === window.location.origin && e.data?.type === 'rvs_admin_oauth') completeSignIn(e.data.access_token); });
+  let saved = null; try { saved = sessionStorage.getItem(TOKEN_KEY); } catch (_) {}
+  if (saved) completeSignIn(saved);
+})();
+</script>
+</body>
+</html>
