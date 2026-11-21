@@ -36,6 +36,25 @@ Each step saves as it goes, so you can close it and pick up later.
 **Edit** opens a single form for quick changes (names, notes, Active). Set **Active = No** to retire
 an audience (the row stays for history; hidden unless "Show inactive").
 
+## Importing the existing State and County audiences
+
+**Import existing audiences** reads every "CUSEC RVS … Experience" app and the groups it's shared with,
+and proposes one audience per app (CUSEC RVS Management left out):
+- "CUSEC RVS **AR** Experience" → **State** Arkansas, with **all** its groups: the state group and the
+  agency group (e.g. AR State Group + ADEM RVS Group).
+- "CUSEC RVS **Craighead County AR** Experience" → **County** Craighead, AR, with its county group. The
+  county name comes from the county group, so "Cape County MO" becomes **Cape Girardeau**.
+- The Experience link becomes the audience's dashboard. Record counts are shown to sanity-check.
+- **"MS - County RVS Group" is left out** of Mississippi (its statewide group is **MEMA RVS Group**); that
+  group is to be removed. Add any other group to leave out in `IMPORT_SKIP_GROUPS` in `index.html`.
+Audiences already in the table are shown but not re-added. Nothing in ArcGIS changes except new rows.
+
+## Several groups per audience
+
+An audience can have more than one group (`GroupId` / `GroupName` hold comma-separated lists). The view
+is shared with **all** of them, the full-layer check covers each, and the wizard's Group step lists them
+with "Remove from this audience" and can add more. The People step has a group picker.
+
 ## The Audiences list
 
 For each audience: what it covers, its group (and member count), its view and dashboard, **how many
@@ -69,5 +88,8 @@ layer): non-admin refused; flags for full-layer access; the CWL wizard from "no 
 created, member added, view created with `ClientId = 'jonesboro_cwl'`, shared only with the CWL group,
 45 records); Arkansas: full-layer sharing removed from the Arkansas group only (CUSEC RVS Management
 kept it); a new Tennessee audience end to end; duplicate checks; real-style save responses.
+Import tested on the simulator loaded with the **real** 46 Experience apps and their sharing (read from
+the org 2026-11-21): 44 new audiences added, states with both groups, MS with MEMA only, Cape Girardeau
+named from its group; Missouri's view created and shared with both SEMA RVS Group and MO State Group.
 On the real org: sign-in and loading the table and 87 groups. **View creation hasn't run on the real
 org yet**; the first real run is the CWL view.

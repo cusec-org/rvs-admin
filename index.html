@@ -111,6 +111,7 @@
         <input type="search" id="aud-filter" placeholder="Filter by name, state, county, client or group…" />
         <label class="muted"><input type="checkbox" id="aud-inactive" style="width:auto"> Show inactive</label>
         <button class="btn plain" id="aud-refresh" type="button">Refresh</button>
+        <button class="btn plain" id="aud-import" type="button">Import existing audiences</button>
         <button class="btn" id="aud-add" type="button">Add audience</button>
       </div>
       <div class="tbl-wrap"><table>
@@ -183,6 +184,28 @@
     <div class="actions">
       <button class="btn plain" id="aud-cancel" type="button">Cancel</button>
       <button class="btn" id="aud-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import existing audiences -->
+<div class="dialog-bg hidden" id="imp-dialog" role="dialog" aria-modal="true" aria-labelledby="imp-title">
+  <div class="dialog" style="max-width:1100px">
+    <h2 id="imp-title">Import existing audiences</h2>
+    <p class="muted">Found from the “CUSEC RVS … Experience” apps and the groups each one is shared with
+      (CUSEC RVS Management left out). Check the list, then add the ones you want. Nothing changes in ArcGIS
+      except new rows in the RVS Access table.</p>
+    <div id="imp-msg" style="margin-top:10px"></div>
+    <div class="toolbar" style="margin-top:10px">
+      <label class="muted"><input type="checkbox" id="imp-all" style="width:auto" checked> Select all new</label>
+    </div>
+    <div class="tbl-wrap" style="max-height:60vh;overflow-y:auto"><table>
+      <thead><tr><th></th><th>Type</th><th>Audience</th><th>Groups</th><th>Experience</th><th>Records</th><th>Notes</th></tr></thead>
+      <tbody id="imp-rows"></tbody>
+    </table></div>
+    <div class="actions">
+      <button class="btn plain" id="imp-cancel" type="button">Close</button>
+      <button class="btn" id="imp-add" type="button" disabled>Add selected</button>
     </div>
   </div>
 </div>
@@ -350,12 +373,14 @@ async function checkAudiences() {
   if (!rvsUrl) { try { rvsUrl = await itemUrl(CONFIG.rvsItemId, CONFIG.rvsLayerIndex); } catch (_) { rvsUrl = null; } }
   await loadFullShares(); drawAudiences();
   await Promise.all(rows.map(async r => {
-    const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
-    if (gid && !groupInfo[gid]?.title) {
-      try { const g = await rest(sharing(`community/groups/${gid}`)); groupInfo[gid] = Object.assign(groupInfo[gid] || {}, { id: gid, title: g.title, access: g.access, owner: g.owner }); }
-      catch (_) { groupInfo[gid] = { id: gid, missing: true }; }
+    const vid = (r.ViewItemId || '').trim();
+    for (const gid of gidsOf(r)) {
+      if (!groupInfo[gid]?.title) {
+        try { const g = await rest(sharing(`community/groups/${gid}`)); groupInfo[gid] = Object.assign(groupInfo[gid] || {}, { id: gid, title: g.title, access: g.access, owner: g.owner }); }
+        catch (_) { groupInfo[gid] = { id: gid, missing: true }; }
+      }
+      if (!groupInfo[gid].missing) { try { await groupMembers(gid); } catch (_) {} }
     }
-    if (gid && !groupInfo[gid].missing) { try { await groupMembers(gid); } catch (_) {} }
     if (vid && !viewInfo[vid]) {
       try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type, url: it.url, owner: it.owner }; }
       catch (_) { viewInfo[vid] = { missing: true }; }
@@ -371,6 +396,11 @@ async function checkAudiences() {
 
 // ── Access rule ─────────────────────────────────────────────────────────────
 const BLANK_CLIENT = "(ClientId IS NULL OR ClientId = '')";
+// An audience can have several groups (e.g. a state's "AR State Group" + its agency's "ADEM RVS Group"):
+// GroupId / GroupName hold comma-separated lists, in the same order.
+const gidsOf = r => [...new Set(String(r?.GroupId || '').split(',').map(s => s.trim()).filter(Boolean))];
+const gtitle = id => groupInfo[id]?.title || id;
+const groupFields = ids => ({ GroupId: ids.join(',') || null, GroupName: ids.map(gtitle).join(', ') || null });
 function audienceWhere(r) {
   const st = (r.State || '').trim().toUpperCase(), co = (r.County || '').trim(), cid = (r.ClientId || '').trim();
   if (r.AccessType === 'Client') return cid ? `ClientId = ${sqlStr(cid)}` : '';
@@ -379,15 +409,15 @@ function audienceWhere(r) {
   return '';
 }
 function problems(r) {
-  const p = [], gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
+  const p = [], gids = gidsOf(r), vid = (r.ViewItemId || '').trim();
   if (!audienceWhere(r)) p.push(['bad', r.AccessType === 'Client' ? 'No Client ID' : r.AccessType === 'County' ? 'Needs State and County' : 'Needs State']);
-  if (!gid) p.push(['warn', 'No group yet']);
-  else if (groupInfo[gid]?.missing) p.push(['bad', 'Group not found (deleted, or you can\'t see it)']);
-  else if (groupInfo[gid]?.members && groupInfo[gid].members.length <= 1) p.push(['warn', 'Group has no members besides its owner']);
+  if (!gids.length) p.push(['warn', 'No group yet']);
+  gids.filter(g => groupInfo[g]?.missing).forEach(g => p.push(['bad', `Group not found: ${r.GroupName || g}`]));
+  if (gids.length && gids.every(g => groupInfo[g]?.members && groupInfo[g].members.length <= 1)) p.push(['warn', 'No members besides the group owner']);
   if (!vid) p.push(['warn', 'No view yet']);
   else if (viewInfo[vid]?.missing) p.push(['bad', 'View not found']);
-  else if (gid && viewShares[vid] && !viewShares[vid].includes(gid)) p.push(['bad', 'View not shared with the group']);
-  if (gid && fullShares[gid]) p.push(['bad', 'Group can still open the full RVS layer (all records)']);
+  else if (viewShares[vid]) gids.filter(g => !viewShares[vid].includes(g)).forEach(g => p.push(['bad', `View not shared with ${gtitle(g)}`]));
+  gids.filter(g => fullShares[g]).forEach(g => p.push(['bad', `${gtitle(g)} can still open the full RVS layer (all records)`]));
   if (counts[r[accessOid]] === 0) p.push(['warn', 'No RVS records match']);
   if (r.AccessType === 'Client' && rows.some(o => o !== r && (o.ClientId || '').trim() && o.ClientId === r.ClientId)) p.push(['bad', 'Client ID used by another row']);
   return p;
@@ -397,15 +427,17 @@ function problems(r) {
 function drawAudiences() {
   const q = $('aud-filter').value.trim().toLowerCase(), showInactive = $('aud-inactive').checked;
   const list = rows.filter(r => (showInactive || r.Active !== 'No')
-    && (!q || [r.AccessName, r.State, r.County, r.ClientId, r.ClientName, groupInfo[r.GroupId]?.title, r.GroupName].join(' ').toLowerCase().includes(q)));
+    && (!q || [r.AccessName, r.State, r.County, r.ClientId, r.ClientName, ...gidsOf(r).map(gtitle), r.GroupName].join(' ').toLowerCase().includes(q)));
   $('aud-rows').innerHTML = list.map(r => {
-    const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), g = groupInfo[gid], v = viewInfo[vid];
+    const gids = gidsOf(r), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
     const scope = r.AccessType === 'Client' ? `ClientId = <code>${esc(r.ClientId || '?')}</code>`
       : r.AccessType === 'County' ? `${esc(r.County || '?')}, ${esc(r.State || '?')}<div class="sub">blank ClientId</div>` : `${esc(r.State || '?')}<div class="sub">blank ClientId</div>`;
-    const grp = !gid ? '<span class="warn">-</span>'
-      : g?.missing ? `<span class="bad">${esc(r.GroupName || gid)}</span>`
-      : `<a href="${CONFIG.orgUrl}/home/group.html?id=${esc(gid)}" target="_blank" rel="noopener">${esc(g?.title || r.GroupName || gid)}</a>`
-        + `<div class="sub">${g?.members ? g.members.length + ' member' + (g.members.length === 1 ? '' : 's') : '…'}</div>`;
+    const grp = !gids.length ? '<span class="warn">-</span>' : gids.map(gid => {
+      const g = groupInfo[gid];
+      return g?.missing ? `<div class="bad">${esc(gid)}</div>`
+        : `<div><a href="${CONFIG.orgUrl}/home/group.html?id=${esc(gid)}" target="_blank" rel="noopener">${esc(g?.title || gid)}</a>`
+          + ` <span class="sub">${g?.members ? g.members.length + ' member' + (g.members.length === 1 ? '' : 's') : '…'}</span></div>`;
+    }).join('');
     const view = !vid ? '<span class="warn">-</span>' : v?.missing ? '<span class="bad">not found</span>'
       : `<a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a>`
         + (r.DashboardUrl ? `<div class="sub"><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">dashboard</a></div>` : '');
@@ -415,7 +447,7 @@ function drawAudiences() {
     return `<tr class="${r.Active === 'No' ? 'inactive' : ''}"><td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td>`
       + `<td><b>${esc(r.AccessName)}</b>${r.Active === 'No' ? '<div class="sub">inactive</div>' : ''}</td><td>${scope}</td><td>${grp}</td><td>${view}</td>`
       + `<td>${c === undefined ? '…' : c === 'err' ? '<span class="sub">n/a</span>' : c}</td><td>${status}</td>`
-      + `<td style="white-space:nowrap">${ps.some(([k]) => k === 'bad') || !gid || !vid
+      + `<td style="white-space:nowrap">${ps.some(([k]) => k === 'bad') || !gids.length || !vid
           ? `<button class="btn small" data-setup="${esc(r[accessOid])}" type="button">Finish setup</button> ` : `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">Setup</button> `}`
       + `<button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
   }).join('') || '<tr><td colspan="8" class="muted">No audiences yet. Use “Add audience”.</td></tr>';
@@ -434,7 +466,12 @@ function openAudience(r) {
   $('f-type').value = r?.AccessType || 'Client'; $('f-active').value = r?.Active === 'No' ? 'No' : 'Yes';
   $('f-name').value = r?.AccessName || ''; $('f-state').value = r?.State || ''; $('f-county').value = r?.County || '';
   $('f-clientname').value = r?.ClientName || ''; $('f-clientid').value = r?.ClientId || '';
-  $('f-group').innerHTML = groupOptions((r?.GroupId || '').trim()); $('f-newgroup').value = '';
+  const gids = gidsOf(r);
+  if (gids.length > 1) {                               // several groups: shown here, changed in Setup
+    $('f-group').innerHTML = `<option value="__multi__">${esc(gids.map(gtitle).join(' + '))} (change in Setup)</option>`;
+    $('f-group').disabled = true;
+  } else { $('f-group').disabled = false; $('f-group').innerHTML = groupOptions(gids[0] || ''); }
+  $('f-newgroup').value = '';
   $('f-view').value = r?.ViewItemId || ''; $('f-dash').value = r?.DashboardUrl || ''; $('f-notes').value = r?.Notes || '';
   // A client ID that records may already use is locked; it is the key the views and exports filter on.
   const lockId = !!(r && r.AccessType === 'Client' && (r.ClientId || '').trim());
@@ -485,11 +522,17 @@ async function saveAudience() {
   $('aud-save').disabled = true; say('ok', '<span class="spinner"></span>Saving…', 'aud-dlg-msg');
   try {
     let gid = $('f-group').value, gtitle = '';
-    if (gid === NEW_GROUP) {
-      const g = await createGroup($('f-newgroup').value.trim(), `RVS access: ${r.AccessName}`);
-      gid = g.id; gtitle = g.title;
-    } else gtitle = gid ? (groupInfo[gid]?.title || editing?.GroupName || '') : '';
-    const attrs = { ...r, GroupId: gid || null, GroupName: gtitle || null };
+    let groupAttrs;
+    if (gid === '__multi__') {                         // several groups: leave them as they are
+      groupAttrs = { GroupId: editing.GroupId, GroupName: editing.GroupName }; gtitle = editing.GroupName;
+    } else {
+      if (gid === NEW_GROUP) {
+        const g = await createGroup($('f-newgroup').value.trim(), `RVS access: ${r.AccessName}`);
+        gid = g.id; gtitle = g.title;
+      } else gtitle = gid ? (groupInfo[gid]?.title || editing?.GroupName || '') : '';
+      groupAttrs = { GroupId: gid || null, GroupName: gtitle || null };
+    }
+    const attrs = { ...r, ...groupAttrs };
     Object.keys(attrs).forEach(k => { if (attrs[k] === '') attrs[k] = null; });
     const payload = editing ? { updates: JSON.stringify([{ attributes: { ...attrs, [accessOid]: editing[accessOid] } }]) }
                             : { adds: JSON.stringify([{ attributes: attrs }]) };
@@ -515,7 +558,7 @@ async function createGroup(title, snippet) {
   groups.sort((a, b) => a.title.localeCompare(b.title));
   return groupInfo[g.id];
 }
-function usedBy(gid) { return rows.filter(r => (r.GroupId || '').trim() === gid).map(r => r.AccessName); }
+function usedBy(gid) { return rows.filter(r => gidsOf(r).includes(gid)).map(r => r.AccessName); }
 function drawGroups() {
   const q = $('grp-filter').value.trim().toLowerCase();
   $('grp-rows').innerHTML = groups.filter(g => !q || g.title.toLowerCase().includes(q)).map(g => {
@@ -597,14 +640,14 @@ function describeAudience(r) {
 }
 function firstIncomplete(r) {
   if (!r) return 1;
-  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim();
-  if (!gid || groupInfo[gid]?.missing) return 2;
-  if (!vid || viewInfo[vid]?.missing || (viewShares[vid] && !viewShares[vid].includes(gid)) || fullShares[gid]) return 4;
-  if ((groupInfo[gid]?.members || []).length <= 1) return 3;
+  const gids = gidsOf(r), vid = (r.ViewItemId || '').trim();
+  if (!gids.length || gids.some(g => groupInfo[g]?.missing)) return 2;
+  if (!vid || viewInfo[vid]?.missing || (viewShares[vid] && gids.some(g => !viewShares[vid].includes(g))) || gids.some(g => fullShares[g])) return 4;
+  if (gids.every(g => (groupInfo[g]?.members || []).length <= 1)) return 3;
   return 6;
 }
 function openWizard(r) {
-  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: r?.GroupId ? 'keep' : 'new', busy: false };
+  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null };
   $('wz-title').textContent = r ? `Set up: ${r.AccessName}` : 'Set up a new audience';
   $('wz-dialog').classList.remove('hidden'); renderWizard();
 }
@@ -670,27 +713,42 @@ function wzWhoErrors(v, r) {
 
 // Step 2: group
 function wzGroup(r) {
-  const gid = (r.GroupId || '').trim(), g = groupInfo[gid];
+  const gids = gidsOf(r), have = gids.length > 0;
   const suggested = r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}` : `RVS State - ${r.AccessName}`;
   const opt = (mode, html) => `<label class="choice ${wz.groupMode === mode ? 'on' : ''}"><input type="radio" name="wz-gmode" value="${mode}" ${wz.groupMode === mode ? 'checked' : ''}><div>${html}</div></label>`;
-  return `<h3>Which ArcGIS group is this audience?</h3>
-    <p class="muted">Everyone in the group will see ${describeAudience(r)}.</p><div style="margin-top:10px">
-    ${gid && !g?.missing ? opt('keep', `Keep the current group: <b>${esc(g?.title || r.GroupName || gid)}</b>`) : ''}
-    ${opt('new', `Create a new group named<br><input id="wz-newgroup" value="${esc(suggested)}" style="margin-top:6px">`)}
-    ${opt('existing', `Use another existing group<br><select id="wz-existing" style="margin-top:6px">${groups.map(x => `<option value="${esc(x.id)}" ${x.id === gid ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`)}
+  return `<h3>Which ArcGIS group${have && gids.length > 1 ? 's are' : ' is'} this audience?</h3>
+    <p class="muted">Everyone in ${gids.length > 1 ? 'these groups' : 'the group'} will see ${describeAudience(r)}.
+      An audience can have more than one group (for a state: its state group and its agency's group).</p>
+    ${have ? `<div style="margin-top:10px">${gids.map(g => `<div class="member"><div><b>${esc(gtitle(g))}</b>${groupInfo[g]?.missing ? ' <span class="bad">not found</span>' : ''}</div>
+      <button class="btn danger small" data-wzdropgroup="${esc(g)}" type="button">Remove from this audience</button></div>`).join('')}</div>` : ''}
+    <div style="margin-top:10px">
+    ${have ? opt('keep', 'Keep these groups') : ''}
+    ${opt('new', `${have ? 'Also create' : 'Create'} a new group named<br><input id="wz-newgroup" value="${esc(suggested)}" style="margin-top:6px">`)}
+    ${opt('existing', `${have ? 'Also add' : 'Use'} an existing group<br><select id="wz-existing" style="margin-top:6px">${groups.filter(x => !gids.includes(x.id)).map(x => `<option value="${esc(x.id)}">${esc(x.title)}</option>`).join('')}</select>`)}
     </div>`;
+}
+async function wzDropGroup(gid) {
+  const r = wzRow(), left = gidsOf(r).filter(g => g !== gid);
+  if (!confirm(`Remove ${gtitle(gid)} from ${r.AccessName}? The group itself isn't deleted, and its sharing isn't changed.`)) return;
+  try { await writeRow(groupFields(left), r[accessOid]); wz.groupMode = left.length ? 'keep' : 'new'; renderWizard(); }
+  catch (e) { wzSay('err', esc(e.message)); }
 }
 
 // Step 3: people
 function wzPeople(r) {
-  return `<h3>Who is in ${esc(groupInfo[r.GroupId]?.title || 'the group')}?</h3>
+  const gids = gidsOf(r);
+  if (!wz.peopleGroup || !gids.includes(wz.peopleGroup)) wz.peopleGroup = gids[0];
+  const pick = gids.length > 1 ? `<div style="margin:10px 0"><label class="muted" for="wz-pgroup">Group</label>
+    <select id="wz-pgroup">${gids.map(g => `<option value="${esc(g)}" ${g === wz.peopleGroup ? 'selected' : ''}>${esc(gtitle(g))}</option>`).join('')}</select></div>` : '';
+  return `<h3>Who is in ${gids.length > 1 ? 'the groups' : esc(gtitle(wz.peopleGroup) || 'the group')}?</h3>
     <p class="muted">Add the logins of the people who should see this audience's records. They need an account in the CUSEC Hub community organization first.</p>
+    ${pick}
     <input type="search" id="wz-user-search" placeholder="Find a person by name or username…" style="margin-top:10px">
     <div id="wz-user-results"></div>
-    <h3>Current members</h3><div id="wz-mem-list"><p class="muted"><span class="spinner"></span>Loading…</p></div>`;
+    <h3>Current members of ${esc(gtitle(wz.peopleGroup))}</h3><div id="wz-mem-list"><p class="muted"><span class="spinner"></span>Loading…</p></div>`;
 }
 async function wzLoadMembers() {
-  const gid = wzRow()?.GroupId; if (!gid) return;
+  const gid = wz.peopleGroup; if (!gid) return;
   try {
     const list = await groupMembers(gid, true);
     $('wz-mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span></div>`
@@ -704,7 +762,7 @@ function wzSearch() {
   wzTimer = setTimeout(async () => {
     try {
       const r = await rest(sharing('community/users'), { q: `${q.replace(/[^\w.@ -]/g, '')} AND orgid:${me.orgId}`, num: 20 });
-      const cur = new Set((groupInfo[wzRow().GroupId]?.members || []).map(m => m.username));
+      const cur = new Set((groupInfo[wz.peopleGroup]?.members || []).map(m => m.username));
       $('wz-user-results').innerHTML = (r.results || []).map(u => `<div class="member"><div><b>${esc(u.fullName || u.username)}</b> <span class="sub">${esc(u.username)}</span></div>`
         + (cur.has(u.username) ? '<span class="sub">already in</span>' : `<button class="btn small" data-wzadd="${esc(u.username)}" type="button">Add</button>`) + '</div>').join('')
         || '<p class="muted">Nobody found. Their account must exist in the CUSEC Hub community organization.</p>';
@@ -712,7 +770,7 @@ function wzSearch() {
   }, 350);
 }
 async function wzMember(username, add) {
-  const gid = wzRow().GroupId;
+  const gid = wz.peopleGroup;
   if (!add && !confirm(`Remove ${username}? They will stop seeing this audience's records.`)) return;
   try {
     const r = await rest(sharing(`community/groups/${gid}/${add ? 'addUsers' : 'removeUsers'}`), { users: username }, true);
@@ -725,12 +783,15 @@ async function wzMember(username, add) {
 
 // Step 4: data view
 function wzView(r) {
-  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
+  const gids = gidsOf(r), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
   const c = counts[r[accessOid]], src = fullItemInfo[CONFIG.rvsItemId];
   const canCreate = me.role === 'org_admin' || (src && src.owner === me.username);
-  let html = `<h3>The data this group can open</h3>
+  const notShared = vid && viewShares[vid] ? gids.filter(g => !viewShares[vid].includes(g)) : [];
+  const stillFull = gids.filter(g => fullShares[g]);
+  let html = `<h3>The data ${gids.length > 1 ? 'these groups' : 'this group'} can open</h3>
     <p class="muted">A <b>view</b> is a filtered copy of the RVS layer. This one will show ${describeAudience(r)}
-    ${typeof c === 'number' ? `(<b>${c}</b> record${c === 1 ? '' : 's'} today)` : ''}, and only members of the group can open it.</p>`;
+    ${typeof c === 'number' ? `(<b>${c}</b> record${c === 1 ? '' : 's'} today)` : ''}, and only members of
+    ${gids.length ? gids.map(g => `<b>${esc(gtitle(g))}</b>`).join(' and ') : 'the group'} can open it.</p>`;
   if (!vid || v?.missing) {
     html += `<div class="big-status todo">No view yet.</div>`
       + (canCreate ? `<button class="btn" id="wz-create-view" type="button">Create the view</button>`
@@ -738,15 +799,15 @@ function wzView(r) {
       + `<p class="muted" style="margin-top:10px">Already made one? Paste its item ID: <input id="wz-view-id" placeholder="32-character item id" style="width:300px"> <button class="btn plain small" id="wz-use-view" type="button">Use it</button></p>`;
   } else {
     html += `<div class="big-status ok">✓ View ready: <a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a></div>`;
-    if (viewShares[vid] && !viewShares[vid].includes(gid))
-      html += `<div class="big-status warn">The view isn't shared with the group yet, so its members can't open it.
-        <button class="btn small" id="wz-share-view" type="button">Share it with the group</button></div>`;
+    if (notShared.length)
+      html += `<div class="big-status warn">The view isn't shared with ${notShared.map(g => `<b>${esc(gtitle(g))}</b>`).join(' and ')} yet, so ${notShared.length > 1 ? 'their' : 'its'} members can't open it.
+        <button class="btn small" id="wz-share-view" type="button">Share it</button></div>`;
   }
-  if (fullShares[gid]) {
-    html += `<div class="big-status warn" style="display:block"><b>This group can still open the full RVS layer</b>
-      (${esc(fullShares[gid].join(', '))}), which shows <b>all</b> records, including private clients'.<br>
-      <span class="muted">Stop sharing it only once this group's dashboard and apps use the view above; otherwise they'll lose access to their data.</span><br>
-      <button class="btn danger small" id="wz-unshare-full" type="button" style="margin-top:8px">Stop sharing the full RVS layer with this group</button></div>`;
+  if (stillFull.length) {
+    html += `<div class="big-status warn" style="display:block"><b>${stillFull.map(g => esc(gtitle(g))).join(' and ')} can still open the full RVS layer</b>
+      (${esc([...new Set(stillFull.flatMap(g => fullShares[g]))].join(', '))}), which shows <b>all</b> records, including private clients'.<br>
+      <span class="muted">Stop sharing it only once ${stillFull.length > 1 ? 'these groups\'' : 'this group\'s'} dashboard and apps use the view above; otherwise they'll lose access to their data.</span><br>
+      <button class="btn danger small" id="wz-unshare-full" type="button" style="margin-top:8px">Stop sharing the full RVS layer with ${stillFull.length > 1 ? 'these groups' : 'this group'}</button></div>`;
   }
   return html;
 }
@@ -789,25 +850,25 @@ async function createView(r) {
   await rest(`${adminUrl}/0/updateDefinition`, { updateDefinition: JSON.stringify({ viewDefinitionQuery: where }) }, true);
   await rest(sharing(`content/users/${me.username}/items/${created.itemId}/update`), {
     title: `RVS - ${r.AccessName} (view)`, tags: 'RVS,RVS Access', snippet: `RVS records for ${r.AccessName} only. Filter: ${where}. Made by RVS Access Admin.` }, true);
-  if (r.GroupId) await rest(sharing(`content/users/${me.username}/items/${created.itemId}/share`), { groups: r.GroupId, everyone: 'false', org: 'false' }, true);
+  if (gidsOf(r).length) await rest(sharing(`content/users/${me.username}/items/${created.itemId}/share`), { groups: gidsOf(r).join(','), everyone: 'false', org: 'false' }, true);
   viewInfo[created.itemId] = { title: `RVS - ${r.AccessName} (view)`, owner: me.username };
   return created.itemId;
 }
 async function wzShareView() {
   const r = wzRow(), vid = r.ViewItemId, owner = viewInfo[vid]?.owner || me.username;
   try {
-    await rest(sharing(`content/users/${owner}/items/${vid}/share`), { groups: r.GroupId, everyone: 'false', org: 'false' }, true);
-    await checkAudiences(); wzSay('ok', 'Shared the view with the group.'); $('wz-body').innerHTML = wzView(wzRow());
+    await rest(sharing(`content/users/${owner}/items/${vid}/share`), { groups: gidsOf(r).join(','), everyone: 'false', org: 'false' }, true);
+    await checkAudiences(); wzSay('ok', 'Shared the view.'); $('wz-body').innerHTML = wzView(wzRow());
   } catch (e) { wzSay('err', esc(e.message)); }
 }
 async function wzUnshareFull() {
-  const r = wzRow(), gid = r.GroupId, title = groupInfo[gid]?.title || 'this group';
+  const r = wzRow(), gids = gidsOf(r).filter(g => fullShares[g]), title = gids.map(gtitle).join(' and ') || 'this group';
   if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after their dashboard and apps use the view, or they will lose access to their data.`)) return;
   try {
     for (const id of CONFIG.fullItems) {
       const owner = fullItemInfo[id]?.owner; if (!owner) continue;
-      const groupsNow = await itemGroupIds(id); if (!groupsNow.includes(gid)) continue;
-      await rest(sharing(`content/users/${owner}/items/${id}/unshare`), { groups: gid }, true);
+      const groupsNow = await itemGroupIds(id), drop = gids.filter(g => groupsNow.includes(g));
+      if (drop.length) await rest(sharing(`content/users/${owner}/items/${id}/unshare`), { groups: drop.join(',') }, true);
     }
     await checkAudiences(); wzSay('ok', `The full RVS layer is no longer shared with <b>${esc(title)}</b>.`); $('wz-body').innerHTML = wzView(wzRow());
   } catch (e) { wzSay('err', 'Could not stop sharing: ' + esc(e.message) + ' (needs the layer\'s owner or an organization administrator).'); }
@@ -826,14 +887,15 @@ function wzDash(r) {
     <input id="wz-dash" value="${esc(r.DashboardUrl || '')}" placeholder="https://…" style="margin-top:10px">`;
 }
 function wzDone(r) {
-  const gid = (r.GroupId || '').trim(), vid = (r.ViewItemId || '').trim(), mem = (groupInfo[gid]?.members || []).length;
+  const gids = gidsOf(r), vid = (r.ViewItemId || '').trim();
+  const people = gids.reduce((n, g) => n + Math.max((groupInfo[g]?.members || []).length - 1, 0), 0);
   const item = (ok, text, fix) => `<li>${ok ? '<span class="ok">✓</span>' : '<span class="warn">○</span>'} ${text}${!ok && fix ? ` <button class="btn plain small" data-wzgo="${fix}" type="button">Fix</button>` : ''}</li>`;
   return `<h3>${esc(r.AccessName)}</h3><ul class="checklist">
     ${item(true, `Audience saved: sees ${describeAudience(r)}`)}
-    ${item(!!gid && !groupInfo[gid]?.missing, `Group: ${esc(groupInfo[gid]?.title || '-')}`, 2)}
-    ${item(mem > 1, `People: ${Math.max(mem - 1, 0)} besides the owner`, 3)}
-    ${item(!!vid && !viewInfo[vid]?.missing && !(viewShares[vid] && !viewShares[vid].includes(gid)), `Data view: ${esc(viewInfo[vid]?.title || '-')}, shared with the group`, 4)}
-    ${item(!fullShares[gid], 'The group can no longer open the full RVS layer', 4)}
+    ${item(gids.length > 0 && !gids.some(g => groupInfo[g]?.missing), `Group${gids.length > 1 ? 's' : ''}: ${esc(gids.map(gtitle).join(', ') || '-')}`, 2)}
+    ${item(people > 0, `People: ${people} besides the group owner${gids.length > 1 ? 's' : ''}`, 3)}
+    ${item(!!vid && !viewInfo[vid]?.missing && !(viewShares[vid] && gids.some(g => !viewShares[vid].includes(g))), `Data view: ${esc(viewInfo[vid]?.title || '-')}, shared with ${gids.length > 1 ? 'every group' : 'the group'}`, 4)}
+    ${item(!gids.some(g => fullShares[g]), `${gids.length > 1 ? 'No group' : 'The group'} can open the full RVS layer any more`, 4)}
     ${item(!!r.DashboardUrl, r.DashboardUrl ? `<a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">Dashboard</a>` : 'Dashboard (optional)', 5)}
   </ul>`;
 }
@@ -852,9 +914,11 @@ async function wzNext() {
       if (mode === 'new') {
         const t = $('wz-newgroup').value.trim(); if (!t) { wzSay('err', 'Enter a name for the new group.'); return; }
         const g = await createGroup(t, `RVS access: ${r.AccessName}`);
-        await writeRow({ GroupId: g.id, GroupName: g.title }, r[accessOid]);
+        await writeRow(groupFields([...gidsOf(r), g.id]), r[accessOid]);
       } else if (mode === 'existing') {
-        const id = $('wz-existing').value; await writeRow({ GroupId: id, GroupName: groupInfo[id]?.title || null }, r[accessOid]);
+        const id = $('wz-existing').value; if (!id) { wzSay('err', 'Choose a group.'); return; }
+        await writeRow(groupFields([...gidsOf(r), id]), r[accessOid]);
+        if (wzRow().ViewItemId) wzSay('warn', 'Group added. Share the view with it in step 4.');
       }
       wz.groupMode = 'keep';
     } else if (s === 5) {
@@ -867,7 +931,102 @@ async function wzNext() {
   finally { $('wz-next').disabled = false; }
 }
 
+// ── Import existing audiences from the "CUSEC RVS … Experience" apps ────────
+// "CUSEC RVS AR Experience" → State AR; "CUSEC RVS Craighead County AR Experience" → County Craighead, AR.
+// Groups = the groups the Experience is shared with, minus CUSEC RVS Management and any listed below.
+const IMPORT_SKIP_GROUPS = [
+  /^MS - County RVS Group$/i,   // not an audience group; to be removed (MS statewide group is MEMA)
+];
+let importProps = [];
+async function scanExperiences() {
+  const items = []; let start = 1;
+  do {
+    const r = await rest(sharing('search'), { q: `title:"CUSEC RVS" AND type:"Web Experience" AND orgid:${me.orgId}`, num: 100, start, sortField: 'title', sortOrder: 'asc' });
+    items.push(...(r.results || [])); start = r.nextStart;
+  } while (start && start > 0);
+  const props = [];
+  for (const it of items) {
+    const m = (it.title || '').trim().match(/^CUSEC RVS (.+?) Experience$/i); if (!m) continue;
+    const inner = m[1].trim(); let type, st, county = '', mm;
+    if (/^[A-Z]{2}$/.test(inner)) { type = 'State'; st = inner; }
+    else if ((mm = inner.match(/^(.+?) County ([A-Z]{2})$/i))) { type = 'County'; county = mm[1].trim(); st = mm[2].toUpperCase(); }
+    else continue;
+    const shared = (await itemGroupIds(it.id)).filter(g => g !== CONFIG.adminGroupId);
+    const keep = shared.filter(g => !IMPORT_SKIP_GROUPS.some(rx => rx.test(gtitle(g))));
+    const skipped = shared.filter(g => !keep.includes(g));
+    const notes = [];
+    if (type === 'County') {
+      // the county group's own spelling wins ("CUSEC RVS Cape County MO" → group "MO Cape Girardeau County")
+      const fromGroup = keep.map(gtitle).map(t => t.match(new RegExp(`^${st} (.+) County$`, 'i'))).find(Boolean);
+      if (fromGroup && fromGroup[1].toLowerCase() !== county.toLowerCase()) { notes.push(`App title says “${county}”; county taken from its group: ${fromGroup[1]}.`); county = fromGroup[1]; }
+      else if (fromGroup) county = fromGroup[1];
+    }
+    if (skipped.length) notes.push(`Also shared with ${skipped.map(gtitle).join(', ')}: left out (to be removed; not an audience group).`);
+    if (!keep.length) notes.push('Not shared with any audience group.');
+    const row = { AccessType: type, AccessName: type === 'State' ? (STATE_NAMES[st] || st) : `${county} County, ${st}`, State: st,
+      County: type === 'County' ? county : '', ClientId: '', ClientName: '', ...groupFields(keep), ViewItemId: '',
+      DashboardUrl: (it.url && /^https:/i.test(it.url)) ? it.url : `https://experience.arcgis.com/experience/${it.id}`,
+      Active: 'Yes', Notes: notes.join(' ') };
+    const existing = rows.find(r => audienceWhere(r) === audienceWhere(row));
+    props.push({ row, item: it, existing, count: undefined });
+  }
+  props.sort((a, b) => (a.row.AccessType === b.row.AccessType ? 0 : a.row.AccessType === 'State' ? -1 : 1) || a.row.State.localeCompare(b.row.State) || a.row.AccessName.localeCompare(b.row.AccessName));
+  return props;
+}
+function drawImport() {
+  $('imp-rows').innerHTML = importProps.map((p, i) => {
+    const r = p.row, c = p.count;
+    return `<tr class="${p.existing ? 'inactive' : ''}"><td>${p.existing ? '' : `<input type="checkbox" data-imp="${i}" ${p.selected ? 'checked' : ''} style="width:auto">`}</td>`
+      + `<td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td><td><b>${esc(r.AccessName)}</b>${p.existing ? '<div class="sub">already in the table</div>' : ''}</td>`
+      + `<td>${gidsOf(r).map(g => `<div>${esc(gtitle(g))}</div>`).join('') || '<span class="warn">none</span>'}</td>`
+      + `<td><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">${esc(p.item.title)}</a></td>`
+      + `<td>${c === undefined ? '…' : c === 'err' ? 'n/a' : c === 0 ? '<span class="warn">0</span>' : c}</td><td class="sub">${esc(r.Notes)}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">No “CUSEC RVS … Experience” apps found.</td></tr>';
+  const n = importProps.filter(p => p.selected && !p.existing).length;
+  $('imp-add').disabled = !n; $('imp-add').textContent = n ? `Add ${n} selected` : 'Add selected';
+}
+async function openImport() {
+  $('imp-dialog').classList.remove('hidden'); $('imp-rows').innerHTML = '';
+  say('ok', '<span class="spinner"></span>Reading the CUSEC RVS Experience apps and their sharing…', 'imp-msg');
+  try {
+    importProps = await scanExperiences();
+    importProps.forEach(p => { p.selected = !p.existing; });
+    const fresh = importProps.filter(p => !p.existing).length;
+    say(fresh ? 'ok' : 'warn', `Found ${importProps.length} audience apps; ${fresh} not in the table yet.`, 'imp-msg');
+    drawImport();
+    if (!rvsUrl) { try { rvsUrl = await itemUrl(CONFIG.rvsItemId, CONFIG.rvsLayerIndex); } catch (_) {} }
+    await Promise.all(importProps.map(async p => {
+      try { p.count = rvsUrl ? (await rest(`${rvsUrl}/query`, { where: audienceWhere(p.row), returnCountOnly: 'true' })).count : 'err'; }
+      catch (_) { p.count = 'err'; }
+    }));
+    drawImport();
+  } catch (e) { say('err', esc(e.message), 'imp-msg'); }
+}
+async function addImported() {
+  const pick = importProps.filter(p => p.selected && !p.existing); if (!pick.length) return;
+  $('imp-add').disabled = true; say('ok', `<span class="spinner"></span>Adding ${pick.length} audiences…`, 'imp-msg');
+  try {
+    let added = 0;
+    for (let i = 0; i < pick.length; i += 50) {
+      const adds = pick.slice(i, i + 50).map(p => { const a = { ...p.row }; Object.keys(a).forEach(k => { if (a[k] === '') a[k] = null; }); return { attributes: a }; });
+      const res = await rest(`${accessUrl}/applyEdits`, { adds: JSON.stringify(adds) }, true);
+      const bad = (res.addResults || []).filter(x => !x.success);
+      added += (res.addResults || []).length - bad.length;
+      if (bad.length) throw new Error(`${bad.length} row(s) were refused: ${bad[0].error?.description || 'unknown reason'}`);
+    }
+    $('imp-dialog').classList.add('hidden');
+    await loadAll();
+    say('ok', `Added <b>${added}</b> audiences. Each still needs its data view: use <b>Finish setup</b> on each row.`);
+  } catch (e) { say('err', esc(e.message), 'imp-msg'); await loadAll(); }
+  finally { $('imp-add').disabled = false; }
+}
+
 // ── Wiring ──────────────────────────────────────────────────────────────────
+$('aud-import').onclick = openImport;
+$('imp-cancel').onclick = () => $('imp-dialog').classList.add('hidden');
+$('imp-add').onclick = addImported;
+$('imp-rows').addEventListener('change', e => { const i = e.target.dataset.imp; if (i !== undefined) { importProps[i].selected = e.target.checked; drawImport(); } });
+$('imp-all').onchange = e => { importProps.forEach(p => { if (!p.existing) p.selected = e.target.checked; }); drawImport(); };
 $('wz-next').onclick = wzNext;
 $('wz-back').onclick = () => { wz.step = Math.max(1, wz.step - 1); renderWizard(); };
 $('wz-close').onclick = () => { if (!wz?.busy) $('wz-dialog').classList.add('hidden'); };
@@ -879,6 +1038,7 @@ $('wz-body').addEventListener('change', e => {
   if (e.target.id === 'wz-type') wzWhoSync();
   if (e.target.name === 'wz-gmode') { wz.groupMode = e.target.value; document.querySelectorAll('.choice').forEach(c => c.classList.toggle('on', c.contains(e.target))); }
   if (e.target.id === 'wz-existing') { wz.groupMode = 'existing'; const radio = document.querySelector('input[value="existing"]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+  if (e.target.id === 'wz-pgroup') { wz.peopleGroup = e.target.value; renderWizard(); }
 });
 $('wz-body').addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
@@ -889,6 +1049,7 @@ $('wz-body').addEventListener('click', e => {
   if (t.dataset.wzadd) wzMember(t.dataset.wzadd, true);
   if (t.dataset.wzremove) wzMember(t.dataset.wzremove, false);
   if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
+  if (t.dataset.wzdropgroup) wzDropGroup(t.dataset.wzdropgroup);
 });
 $('auth-btn').onclick = () => token ? signOut() : signIn();
 $('gate-btn').onclick = signIn;
