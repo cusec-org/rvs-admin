@@ -31,7 +31,7 @@ Each step saves as it goes, so you can close it and pick up later.
    today), it says so and offers **Stop sharing the full RVS layer with this group**. Do that **only
    after** that group's dashboard and apps use the new view, or its members lose access to their data.
 5. **Done**: a checklist, with a **Fix** button next to anything still missing, and a link to the
-   **RVS Summary app**, which every audience uses (it replaces the per-audience Experiences).
+   **RVS Summary app**, which every audience uses.
 
 **Edit** opens a single form for quick changes (names, notes, Active). Set **Active = No** to retire
 an audience (the row stays for history; hidden unless "Show inactive").
@@ -44,7 +44,8 @@ and proposes one audience per app (CUSEC RVS Management left out):
   agency group (e.g. AR State Group + ADEM RVS Group).
 - "CUSEC RVS **Craighead County AR** Experience" → **County** Craighead, AR, with its county group. The
   county name comes from the county group, so "Cape County MO" becomes **Cape Girardeau**.
-- The Experience link is kept on the audience as its **old Experience** (reference only; the RVS Summary app replaces them). Record counts are shown to sanity-check.
+- Experience links are **not** kept: the Experiences are being deleted and the RVS Summary app replaces them. Record counts are shown to sanity-check.
+- The import needs the Experiences to still exist; once they're deleted, add new audiences with **Add audience**.
 - **"MS - County RVS Group" is left out** of Mississippi (its statewide group is **MEMA RVS Group**); that
   group is to be removed. Add any other group to leave out in `IMPORT_SKIP_GROUPS` in `index.html`.
 Audiences already in the table are shown but not re-added. Nothing in ArcGIS changes except new rows.

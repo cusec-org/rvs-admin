@@ -176,8 +176,6 @@
         <div class="hint">Created in your organization, invitation only, visible to the organization; you'll be its owner.</div></div>
       <div><label for="f-view">View item ID</label><input id="f-view" placeholder="32-character item id" />
         <div class="hint" id="view-hint"></div></div>
-      <div><label for="f-dash">Old Experience link</label><input id="f-dash" placeholder="https://…" />
-        <div class="hint">For reference only: being replaced by the RVS Summary app.</div></div>
       <div class="full"><label>Filter for this audience's view</label>
         <div class="code" id="f-filter">-</div>
         <div class="hint">When you create the view (RVS layer → Create view layer), set this as its filter and share it only with the group above.</div></div>
@@ -234,7 +232,7 @@
       <label class="muted"><input type="checkbox" id="imp-all" style="width:auto" checked> Select all new</label>
     </div>
     <div class="tbl-wrap" style="max-height:60vh;overflow-y:auto"><table>
-      <thead><tr><th></th><th>Type</th><th>Audience</th><th>Groups</th><th>Experience</th><th>Records</th><th>Notes</th></tr></thead>
+      <thead><tr><th></th><th>Type</th><th>Audience</th><th>Groups</th><th>Found from</th><th>Records</th><th>Notes</th></tr></thead>
       <tbody id="imp-rows"></tbody>
     </table></div>
     <div class="actions">
@@ -475,7 +473,7 @@ function drawAudiences() {
     }).join('');
     const view = !vid ? '<span class="warn">-</span>' : v?.missing ? '<span class="bad">not found</span>'
       : `<a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a>`
-        + (r.DashboardUrl ? `<div class="sub"><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener" title="Being replaced by the RVS Summary app">old Experience</a></div>` : '');
+;
     const c = counts[r[accessOid]];
     const ps = problems(r);
     const status = ps.length ? `<ul class="flags">${ps.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>` : '<span class="ok">OK</span>';
@@ -507,7 +505,7 @@ function openAudience(r) {
     $('f-group').disabled = true;
   } else { $('f-group').disabled = false; $('f-group').innerHTML = groupOptions(gids[0] || ''); }
   $('f-newgroup').value = '';
-  $('f-view').value = r?.ViewItemId || ''; $('f-dash').value = r?.DashboardUrl || ''; $('f-notes').value = r?.Notes || '';
+  $('f-view').value = r?.ViewItemId || ''; $('f-notes').value = r?.Notes || '';
   // A client ID that records may already use is locked; it is the key the views and exports filter on.
   const lockId = !!(r && r.AccessType === 'Client' && (r.ClientId || '').trim());
   $('f-clientid').readOnly = lockId; $('clientid-hint').textContent = lockId
@@ -519,7 +517,7 @@ function formRow() {
     County: $('f-type').value === 'County' ? $('f-county').value.trim().replace(/\s+(county|parish)$/i, '') : '',
     ClientId: $('f-type').value === 'Client' ? $('f-clientid').value.trim() : '',
     ClientName: $('f-type').value === 'Client' ? $('f-clientname').value.trim() : '',
-    ViewItemId: $('f-view').value.trim(), DashboardUrl: $('f-dash').value.trim(), Active: $('f-active').value, Notes: $('f-notes').value.trim() };
+    ViewItemId: $('f-view').value.trim(), Active: $('f-active').value, Notes: $('f-notes').value.trim() };
 }
 function syncForm() {
   const t = $('f-type').value;
@@ -849,7 +847,7 @@ function wzView(r) {
   if (stillFull.length) {
     html += `<div class="big-status warn" style="display:block"><b>${stillFull.map(g => esc(gtitle(g))).join(' and ')} can still open the full RVS layer</b>
       (${esc([...new Set(stillFull.flatMap(g => fullShares[g]))].join(', '))}), which shows <b>all</b> records, including private clients'.<br>
-      <span class="muted">Stop sharing it only once ${stillFull.length > 1 ? 'these groups\'' : 'this group\'s'} RVS Summary app uses the view above (and its old Experience is retired); otherwise they'll lose access to their data.</span><br>
+      <span class="muted">Stop sharing it only once ${stillFull.length > 1 ? 'these groups\'' : 'this group\'s'} RVS Summary app uses the view above; otherwise they'll lose access to their data.</span><br>
       <button class="btn danger small" id="wz-unshare-full" type="button" style="margin-top:8px">Stop sharing the full RVS layer with ${stillFull.length > 1 ? 'these groups' : 'this group'}</button></div>`;
   }
   return html;
@@ -906,7 +904,7 @@ async function wzShareView() {
 }
 async function wzUnshareFull() {
   const r = wzRow(), gids = gidsOf(r).filter(g => fullShares[g]), title = gids.map(gtitle).join(' and ') || 'this group';
-  if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after the RVS Summary app uses their view (and their old Experience is retired), or they will lose access to their data.`)) return;
+  if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after the RVS Summary app uses their view, or they will lose access to their data.`)) return;
   try {
     for (const id of CONFIG.fullItems) {
       const owner = fullItemInfo[id]?.owner; if (!owner) continue;
@@ -936,7 +934,7 @@ function wzDone(r) {
     ${item(!gids.some(g => fullShares[g]), gids.some(g => fullShares[g])
       ? `${esc(gids.filter(g => fullShares[g]).map(gtitle).join(' and '))} can still open the full RVS layer (all records)`
       : (gids.length > 1 ? 'None of the groups can open the full RVS layer any more' : 'The group can no longer open the full RVS layer'), 4)}
-    <li><span class="ok">→</span> Members open their records in the <a href="${esc(CONFIG.summaryAppUrl)}" target="_blank" rel="noopener">RVS Summary app</a>${r.DashboardUrl ? ` (replaces the <a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">old Experience</a>)` : ''}</li>
+    <li><span class="ok">→</span> Members open their records in the <a href="${esc(CONFIG.summaryAppUrl)}" target="_blank" rel="noopener">RVS Summary app</a></li>
   </ul>`;
 }
 
@@ -1120,7 +1118,6 @@ async function scanExperiences() {
     if (!keep.length) notes.push('Not shared with any audience group.');
     const row = { AccessType: type, AccessName: type === 'State' ? (STATE_NAMES[st] || st) : `${county} County, ${st}`, State: st,
       County: type === 'County' ? county : '', ClientId: '', ClientName: '', ...groupFields(keep), ViewItemId: '',
-      DashboardUrl: (it.url && /^https:/i.test(it.url)) ? it.url : `https://experience.arcgis.com/experience/${it.id}`,
       Active: 'Yes', Notes: notes.join(' ') };
     const existing = rows.find(r => audienceWhere(r) === audienceWhere(row));
     props.push({ row, item: it, existing, count: undefined });
@@ -1134,7 +1131,7 @@ function drawImport() {
     return `<tr class="${p.existing ? 'inactive' : ''}"><td>${p.existing ? '' : `<input type="checkbox" data-imp="${i}" ${p.selected ? 'checked' : ''} style="width:auto">`}</td>`
       + `<td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td><td><b>${esc(r.AccessName)}</b>${p.existing ? '<div class="sub">already in the table</div>' : ''}</td>`
       + `<td>${gidsOf(r).map(g => `<div>${esc(gtitle(g))}</div>`).join('') || '<span class="warn">none</span>'}</td>`
-      + `<td><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">${esc(p.item.title)}</a></td>`
+      + `<td class="sub">${esc(p.item.title)}</td>`
       + `<td>${c === undefined ? '…' : c === 'err' ? 'n/a' : c === 0 ? '<span class="warn">0</span>' : c}</td><td class="sub">${esc(r.Notes)}</td></tr>`;
   }).join('') || '<tr><td colspan="7" class="muted">No “CUSEC RVS … Experience” apps found.</td></tr>';
   const n = importProps.filter(p => p.selected && !p.existing).length;
