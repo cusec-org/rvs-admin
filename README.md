@@ -29,7 +29,7 @@ Each step saves as it goes, so you can close it and pick up later.
    it on the audience. It shows how many records the view returns as a sanity check.
    If the group can still open the **full RVS layer** (true for the existing State and County groups
    today), it says so and offers **Stop sharing the full RVS layer with this group**. Do that **only
-   after** that group's dashboard and apps use the new view, or its members lose access to their data.
+   after** the RVS Summary app uses the new view, or its members lose access to their data.
 5. **Done**: a checklist, with a **Fix** button next to anything still missing, and a link to the
    **RVS Summary app**, which every audience uses.
 
@@ -74,7 +74,7 @@ with "Remove from this audience" and can add more. The People step has a group p
 
 ## The Audiences list
 
-For each audience: what it covers, its group (and member count), its view and dashboard, **how many
+For each audience: what it covers, its group(s) (and member counts), its view, **how many
 RVS records match** (CWL's Craighead buildings are excluded from the Craighead and Arkansas counts),
 and problem flags: no group / no view yet, group or view not found, view not shared with the group,
 **group can still open the full RVS layer**, group with no members, no matching records, Client ID
