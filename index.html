@@ -114,6 +114,7 @@
         <button class="btn plain" id="aud-import" type="button">Import existing audiences</button>
         <button class="btn" id="aud-add" type="button">Add audience</button>
       </div>
+      <div id="org-wide"></div>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Type</th><th>Audience</th><th>Sees records where</th><th>Group</th><th>View</th><th>Records</th><th>Status</th><th></th></tr></thead>
         <tbody id="aud-rows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
@@ -289,6 +290,13 @@ const CONFIG = {
   // Items that expose ALL RVS records. A State / County / Client group should reach the data only
   // through its own filtered view, so the wizard flags these if they're shared with the group.
   fullItems: ['307585a0e7ed4c59aa94cb3c08c9ccfb', '70d1f24a8ae34897b3769f587851a756'],
+  // Items that must NOT be shared with the whole organization or the public once every audience has its
+  // view (all RVS records, and every building's report files). The Audiences tab warns while they are.
+  orgWideItems: ['307585a0e7ed4c59aa94cb3c08c9ccfb', '70d1f24a8ae34897b3769f587851a756',
+    'ed145a3c9b1f4a818a97bd78f816e653', '44e9b6ccce7f46b981ec4ff01348087f'],
+  // Tag every audience view carries: the RVS Summary app finds a person's views by it
+  // (must match CONFIG.access.recordsTag in rvs-summary/index.html)
+  viewTag: 'RVS Records',
 };
 const TOKEN_KEY = 'rvs_admin_token';
 const NEW_GROUP = '__new__';
@@ -415,7 +423,7 @@ async function checkAudiences() {
       if (!groupInfo[gid].missing) { try { await groupMembers(gid); } catch (_) {} }
     }
     if (vid && !viewInfo[vid]) {
-      try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type, url: it.url, owner: it.owner }; }
+      try { const it = await rest(sharing(`content/items/${vid}`)); viewInfo[vid] = { title: it.title, type: it.type, url: it.url, owner: it.owner, tags: it.tags || [] }; }
       catch (_) { viewInfo[vid] = { missing: true }; }
     }
     if (vid && viewInfo[vid] && !viewInfo[vid].missing) { try { viewShares[vid] = await itemGroupIds(vid); } catch (_) {} }
@@ -425,6 +433,52 @@ async function checkAudiences() {
     }
     drawAudiences();
   }));
+  await tagViews();
+  await loadOrgWide();
+}
+// Views made before the RVS Summary app looked for CONFIG.viewTag: add it, so the app finds them
+async function tagViews() {
+  const need = Object.entries(viewInfo).filter(([, v]) => v && !v.missing && Array.isArray(v.tags)
+    && !v.tags.some(t => String(t).toLowerCase() === CONFIG.viewTag.toLowerCase()));
+  let done = 0;
+  for (const [vid, v] of need) {
+    try {
+      const tags = [...v.tags, CONFIG.viewTag];
+      await rest(sharing(`content/users/${v.owner}/items/${vid}/update`), { tags: tags.join(',') }, true);
+      v.tags = tags; done++;
+    } catch (e) { console.warn('could not tag view', vid, e); }
+  }
+  if (done) say('ok', `Tagged ${done} view${done === 1 ? '' : 's'} “${esc(CONFIG.viewTag)}” so the RVS Summary app can find ${done === 1 ? 'it' : 'them'}.`);
+}
+// All-records items still shared with the whole organization (or everyone)
+let orgWide = [];
+async function loadOrgWide() {
+  orgWide = [];
+  await Promise.all((CONFIG.orgWideItems || []).map(async id => {
+    try { const it = await rest(sharing(`content/items/${id}`)); if (it.access === 'org' || it.access === 'public') orgWide.push({ id, title: it.title, owner: it.owner, access: it.access }); }
+    catch (_) { /* can't see it: nothing to say */ }
+  }));
+  drawOrgWide();
+}
+function drawOrgWide() {
+  const el = $('org-wide'); if (!el) return;
+  if (!orgWide.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="banner warn" role="status"><b>Shared with ${orgWide.some(x => x.access === 'public') ? 'everyone' : 'the whole organization'}:</b>
+    every account in the CUSEC Hub org (State, County and private-client users alike) can open these and see <b>all</b> RVS records and reports,
+    whatever their group:<ul style="margin:6px 0 6px 18px">${orgWide.map(x => `<li><a href="${CONFIG.orgUrl}/home/item.html?id=${esc(x.id)}" target="_blank" rel="noopener">${esc(x.title)}</a>
+    (${esc(x.access === 'public' ? 'public' : 'organization')}) <button class="btn plain small" data-orgoff="${esc(x.id)}" type="button">Stop sharing with the organization</button></li>`).join('')}</ul>
+    Do this <b>only after</b> the RVS Summary app update is live and every audience has its view, or people lose access to their records.
+    CUSEC RVS Management keeps access (and any other group the item is shared with).</div>`;
+}
+async function stopOrgWide(id) {
+  const x = orgWide.find(o => o.id === id); if (!x) return;
+  if (!confirm(`Stop sharing “${x.title}” with the whole organization?\n\nOnly the groups it's shared with (CUSEC RVS Management) will be able to open it. `
+    + `Everyone else will see RVS records only through their audience's view.\n\nYou can share it with the organization again from its item page if needed.`)) return;
+  try {
+    await rest(sharing(`content/users/${x.owner}/items/${id}/share`), { everyone: 'false', org: 'false' }, true);
+    say('ok', `“${esc(x.title)}” is no longer shared with the organization.`);
+  } catch (e) { say('err', 'Could not change the sharing: ' + esc(e.message)); }
+  await loadOrgWide();
 }
 
 // ── Access rule ─────────────────────────────────────────────────────────────
@@ -890,7 +944,7 @@ async function createView(r) {
     adminLayerInfo: { viewLayerDefinition: { sourceServiceName: srcName, sourceLayerId: CONFIG.rvsLayerIndex, sourceLayerFields: '*' } }, name: lyr.name }] }) }, true);
   await rest(`${adminUrl}/0/updateDefinition`, { updateDefinition: JSON.stringify({ viewDefinitionQuery: where }) }, true);
   await rest(sharing(`content/users/${me.username}/items/${created.itemId}/update`), {
-    title: `RVS - ${r.AccessName} (view)`, tags: 'RVS,RVS Access', snippet: `RVS records for ${r.AccessName} only. Filter: ${where}. Made by RVS Access Admin.` }, true);
+    title: `RVS - ${r.AccessName} (view)`, tags: `RVS,RVS Access,${CONFIG.viewTag}`, snippet: `RVS records for ${r.AccessName} only. Filter: ${where}. Made by RVS Access Admin.` }, true);
   if (gidsOf(r).length) await rest(sharing(`content/users/${me.username}/items/${created.itemId}/share`), { groups: gidsOf(r).join(','), everyone: 'false', org: 'false' }, true);
   viewInfo[created.itemId] = { title: `RVS - ${r.AccessName} (view)`, owner: me.username };
   return created.itemId;
@@ -1228,6 +1282,7 @@ $('aud-rows').onclick = e => {
   if (b) openAudience(rows.find(r => String(r[accessOid]) === b.dataset.edit));
   if (s) openWizard(rows.find(r => String(r[accessOid]) === s.dataset.setup));
 };
+$('org-wide').onclick = e => { const b = e.target.closest('[data-orgoff]'); if (b) stopOrgWide(b.dataset.orgoff); };
 ['f-type', 'f-group', 'f-state', 'f-county', 'f-view'].forEach(id => $(id).addEventListener('input', syncForm));
 ['f-type', 'f-group'].forEach(id => $(id).addEventListener('change', syncForm));
 $('f-clientname').addEventListener('input', () => { if (!$('f-clientid').readOnly) { $('f-clientid').value = slug($('f-clientname').value); syncForm(); } if (!$('f-name').value) $('f-name').value = $('f-clientname').value; });
