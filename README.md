@@ -49,6 +49,22 @@ and proposes one audience per app (CUSEC RVS Management left out):
   group is to be removed. Add any other group to leave out in `IMPORT_SKIP_GROUPS` in `index.html`.
 Audiences already in the table are shown but not re-added. Nothing in ArcGIS changes except new rows.
 
+## Creating accounts for EMA directors
+
+CUSEC creates and manages the accounts and gives the sign-in to each EMA director. **Create a new
+account** (wizard People step, or **Create account** on the Groups tab) makes the ArcGIS account
+**directly with the password you set**: no invitation email. It's added to the audience's group(s).
+- Defaults match the existing EMA users: user type **Hub Community Member**, role **Viewer** (both changeable).
+- The username is suggested (e.g. `jdoe_cusec`) and checked for availability (usernames are unique
+  across all of ArcGIS Online). **Generate** makes a password that meets the org's rules (8+ characters,
+  a letter and a number), which are checked before creating.
+- The page shows what to give the director (sign-in link, username, password, with Show / Copy all).
+  The password isn't stored anywhere by the page: keep it in CUSEC's password records.
+- **Security question:** ArcGIS doesn't let an admin set it through its API; it's chosen at the
+  account's first sign-in. So **sign in once as the new account** (in a private window) and choose it.
+  Until then the account shows **"setup not finished (never signed in)"** in the member lists.
+- Needs an **organization administrator** (`cusec_hub` is one).
+
 ## Several groups per audience
 
 An audience can have more than one group (`GroupId` / `GroupName` hold comma-separated lists). The view

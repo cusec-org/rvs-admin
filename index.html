@@ -141,6 +141,7 @@
           <div id="mem-body" class="hidden">
             <div class="toolbar" style="margin-top:10px">
               <input type="search" id="user-search" placeholder="Find a user in the organization (name or username)…" />
+              <button class="btn" id="grp-new-account" type="button">Create account</button>
             </div>
             <div id="user-results"></div>
             <h3>Current members</h3>
@@ -184,6 +185,38 @@
     <div class="actions">
       <button class="btn plain" id="aud-cancel" type="button">Cancel</button>
       <button class="btn" id="aud-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create account -->
+<div class="dialog-bg hidden" id="acct-dialog" role="dialog" aria-modal="true" aria-labelledby="acct-title" style="z-index:60">
+  <div class="dialog" style="max-width:640px">
+    <h2 id="acct-title">Create an account</h2>
+    <div id="acct-msg"></div>
+    <div id="acct-form">
+      <p class="muted">Creates the ArcGIS account now, with the password you set (no invitation email), and adds it to
+        <b id="acct-groups">the group</b>. CUSEC manages the account and gives the sign-in to the EMA director.</p>
+      <div class="grid" style="margin-top:10px">
+        <div><label for="a-first">First name</label><input id="a-first" autocomplete="off" /></div>
+        <div><label for="a-last">Last name</label><input id="a-last" autocomplete="off" /></div>
+        <div class="full"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="off" />
+          <div class="hint">ArcGIS requires one; it's used for password resets. No email is sent now.</div></div>
+        <div class="full"><label for="a-user">Username</label><input id="a-user" autocomplete="off" />
+          <div class="hint" id="a-user-hint">Usernames are unique across all of ArcGIS Online.</div></div>
+        <div class="full"><label for="a-pass">Password</label>
+          <div style="display:flex;gap:8px"><input id="a-pass" type="password" autocomplete="new-password" />
+            <button class="btn plain small" id="a-show" type="button">Show</button>
+            <button class="btn plain small" id="a-gen" type="button">Generate</button></div>
+          <div class="hint" id="a-pass-hint"></div></div>
+        <div><label for="a-type">User type</label><select id="a-type"></select></div>
+        <div><label for="a-role">Role</label><select id="a-role"></select></div>
+      </div>
+    </div>
+    <div id="acct-done" class="hidden"></div>
+    <div class="actions">
+      <button class="btn plain" id="acct-cancel" type="button">Close</button>
+      <button class="btn" id="acct-create" type="button">Create account</button>
     </div>
   </div>
 </div>
@@ -577,7 +610,11 @@ async function selectGroup(id) {
   try { drawMembers(await groupMembers(id, true)); } catch (e) { $('mem-list').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
 }
 function drawMembers(list) {
-  $('mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span></div>`
+  loadLastLogins(list.map(m => m.username)).then(() => { if (selGroup && groupInfo[selGroup]?.members === list) paintMembers(list); });
+  paintMembers(list);
+}
+function paintMembers(list) {
+  $('mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span>${setupBadge(m.username)}</div>`
     + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-remove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('')
     || '<p class="muted">No members.</p>';
 }
@@ -743,7 +780,9 @@ function wzPeople(r) {
   return `<h3>Who is in ${gids.length > 1 ? 'the groups' : esc(gtitle(wz.peopleGroup) || 'the group')}?</h3>
     <p class="muted">Add the logins of the people who should see this audience's records. They need an account in the CUSEC Hub community organization first.</p>
     ${pick}
-    <input type="search" id="wz-user-search" placeholder="Find a person by name or username…" style="margin-top:10px">
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input type="search" id="wz-user-search" placeholder="Find an existing account by name or username…" style="flex:1">
+      <button class="btn" id="wz-new-account" type="button">Create a new account</button></div>
     <div id="wz-user-results"></div>
     <h3>Current members of ${esc(gtitle(wz.peopleGroup))}</h3><div id="wz-mem-list"><p class="muted"><span class="spinner"></span>Loading…</p></div>`;
 }
@@ -751,7 +790,9 @@ async function wzLoadMembers() {
   const gid = wz.peopleGroup; if (!gid) return;
   try {
     const list = await groupMembers(gid, true);
-    $('wz-mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span></div>`
+    await loadLastLogins(list.map(m => m.username));
+    if (!$('wz-mem-list')) return;
+    $('wz-mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span>${setupBadge(m.username)}</div>`
       + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-wzremove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('');
   } catch (e) { $('wz-mem-list').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
 }
@@ -931,6 +972,125 @@ async function wzNext() {
   finally { $('wz-next').disabled = false; }
 }
 
+// ── Accounts: create directly (admin-set password, no invitation), flag unfinished setup ──
+// CUSEC manages these accounts and hands them to EMA directors. ArcGIS can't set another
+// person's security question through its API: a new account picks one at its first sign-in,
+// so the admin signs in once as the account to finish setup. Members who never signed in are flagged.
+const ACCOUNT_DEFAULTS = { userType: 'HUBMemberUT', roleId: 'iAAAAAAAAAAAAAAA' };   // Hub Community Member + Viewer (most EMA users)
+let orgAcct = null;                                    // { types, roles, policy }
+let acctCtx = null;                                    // { gids, onDone }
+const lastLogins = {};                                 // username -> ms (-1 = never)
+async function loadOrgAccountInfo() {
+  if (orgAcct) return orgAcct;
+  const [lic, roles, pol] = await Promise.all([
+    rest(sharing('portals/self/userLicenseTypes')).catch(() => ({})),
+    rest(sharing('portals/self/roles'), { num: 100 }).catch(() => ({})),
+    rest(sharing('portals/self/securityPolicy')).catch(() => ({})),
+  ]);
+  orgAcct = {
+    types: (lic.userLicenseTypes || [{ id: ACCOUNT_DEFAULTS.userType, name: 'Hub Community Member' }]).map(t => ({ id: t.id, name: t.name })),
+    roles: (roles.roles || [{ id: ACCOUNT_DEFAULTS.roleId, name: 'Viewer' }]).map(r => ({ id: r.id, name: r.name.trim() })),
+    policy: pol.passwordPolicy || { minLength: 8, minLetter: 1, minDigit: 1 },
+  };
+  return orgAcct;
+}
+function passwordProblems(pw, p = orgAcct?.policy || {}) {
+  const e = [], n = (re) => (pw.match(re) || []).length;
+  if (pw.length < (p.minLength || 8)) e.push(`at least ${p.minLength || 8} characters`);
+  if (n(/[A-Za-z]/g) < (p.minLetter || 0)) e.push(`${p.minLetter} letter${p.minLetter > 1 ? 's' : ''}`);
+  if (n(/[0-9]/g) < (p.minDigit || 0)) e.push(`${p.minDigit} number${p.minDigit > 1 ? 's' : ''}`);
+  if (n(/[A-Z]/g) < (p.minUpper || 0)) e.push(`${p.minUpper} capital letter${p.minUpper > 1 ? 's' : ''}`);
+  if (n(/[a-z]/g) < (p.minLower || 0)) e.push(`${p.minLower} lowercase letter${p.minLower > 1 ? 's' : ''}`);
+  if (n(/[^A-Za-z0-9]/g) < (p.minOther || 0)) e.push(`${p.minOther} symbol${p.minOther > 1 ? 's' : ''}`);
+  return e;
+}
+function generatePassword() {
+  const sets = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnpqrstuvwxyz', '23456789', '!@#$%*?-'];
+  const all = sets.join(''), rnd = n => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+  const chars = sets.map(s => s[rnd(s.length)]);
+  while (chars.length < 16) chars.push(all[rnd(all.length)]);
+  for (let i = chars.length - 1; i > 0; i--) { const j = rnd(i + 1); [chars[i], chars[j]] = [chars[j], chars[i]]; }
+  return chars.join('');
+}
+const suggestUsername = (first, last) => (`${(first || '').trim().charAt(0)}${(last || '').trim()}_cusec`).toLowerCase().replace(/[^a-z0-9_.@-]/g, '');
+let userCheckTimer = null;
+function checkUsername() {
+  clearTimeout(userCheckTimer);
+  const u = $('a-user').value.trim();
+  if (u.length < 6) { $('a-user-hint').innerHTML = '<span class="warn">At least 6 characters.</span>'; return; }
+  userCheckTimer = setTimeout(async () => {
+    try {
+      const r = await rest(sharing('community/checkUsernames'), { usernames: u }, true);
+      const s = (r.usernames || [])[0];
+      $('a-user-hint').innerHTML = !s || s.suggested === s.requested ? '<span class="ok">✓ Available</span>'
+        : `<span class="bad">Taken.</span> Try <a href="#" data-useuser="${esc(s.suggested)}">${esc(s.suggested)}</a>`;
+    } catch (_) { $('a-user-hint').textContent = 'Usernames are unique across all of ArcGIS Online.'; }
+  }, 400);
+}
+async function openAccount(gids, onDone) {
+  acctCtx = { gids, onDone };
+  $('acct-groups').textContent = gids.map(gtitle).join(' and ') || 'no group';
+  ['a-first', 'a-last', 'a-email', 'a-user', 'a-pass'].forEach(id => { $(id).value = ''; });
+  $('a-pass').type = 'password'; $('a-show').textContent = 'Show';
+  $('acct-form').classList.remove('hidden'); $('acct-done').classList.add('hidden'); $('acct-create').classList.remove('hidden');
+  $('acct-cancel').textContent = 'Cancel'; say(null, '', 'acct-msg');
+  $('acct-dialog').classList.remove('hidden');
+  const info = await loadOrgAccountInfo();
+  $('a-type').innerHTML = info.types.map(t => `<option value="${esc(t.id)}" ${t.id === ACCOUNT_DEFAULTS.userType ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('a-role').innerHTML = info.roles.map(r => `<option value="${esc(r.id)}" ${r.id === ACCOUNT_DEFAULTS.roleId ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+  const p = info.policy;
+  $('a-pass-hint').textContent = `Your organization requires ${[`at least ${p.minLength || 8} characters`, p.minLetter && `${p.minLetter} letter`, p.minDigit && `${p.minDigit} number`,
+    p.minUpper && `${p.minUpper} capital`, p.minOther && `${p.minOther} symbol`].filter(Boolean).join(', ')}.`;
+  $('a-first').focus();
+}
+async function createAccount() {
+  const first = $('a-first').value.trim(), last = $('a-last').value.trim(), email = $('a-email').value.trim();
+  const username = $('a-user').value.trim(), pw = $('a-pass').value;
+  const errs = [];
+  if (!first || !last) errs.push('Enter the first and last name.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.push('Enter a valid email.');
+  if (!/^[A-Za-z0-9_.@-]{6,128}$/.test(username)) errs.push('The username must be at least 6 characters: letters, numbers, _ . @ - only.');
+  const pp = passwordProblems(pw); if (pp.length) errs.push('The password needs ' + pp.join(', ') + '.');
+  if (pw && (pw.toLowerCase().includes(username.toLowerCase()) && username)) errs.push("The password can't contain the username.");
+  if (errs.length) { say('err', errs.map(esc).join('<br>'), 'acct-msg'); return; }
+  $('acct-create').disabled = true; say('ok', '<span class="spinner"></span>Creating the account…', 'acct-msg');
+  try {
+    const inv = { email, firstname: first, lastname: last, fullname: `${first} ${last}`, username, password: pw,
+      role: $('a-role').value, userLicenseType: $('a-type').value, userType: 'arcgisonly', groups: acctCtx.gids.join(','),
+      userCreditAssignment: -1, applyActUserDefaults: false };
+    const r = await rest(sharing('portals/self/invite'), { invitationList: JSON.stringify({ invitations: [inv] }), message: '' }, true);
+    if (r.success === false || (r.notInvited || []).length) throw new Error(`ArcGIS did not create ${(r.notInvited || [username]).join(', ')}. The username or email may already be in use.`);
+    lastLogins[username] = -1;
+    const orgSignIn = `${CONFIG.orgUrl}/home/signin.html`;
+    $('acct-form').classList.add('hidden'); $('acct-create').classList.add('hidden'); $('acct-cancel').textContent = 'Done';
+    say('ok', `Created <b>${esc(username)}</b> and added it to ${esc(acctCtx.gids.map(gtitle).join(' and '))}.`, 'acct-msg');
+    $('acct-done').classList.remove('hidden');
+    $('acct-done').innerHTML = `<h3>Finish setting up the account (one time)</h3>
+      <ol style="padding-left:18px;line-height:1.7">
+        <li>Open a <b>private / incognito window</b> (so you stay signed in here).</li>
+        <li>Sign in at <a href="${esc(orgSignIn)}" target="_blank" rel="noopener">${esc(orgSignIn)}</a> as <b>${esc(username)}</b> with the password below.</li>
+        <li>ArcGIS asks for a <b>security question and answer</b>: choose them and keep them with the account's records.</li>
+        <li>Sign out. The account will no longer show “setup not finished”.</li>
+      </ol>
+      <div class="big-status todo" style="display:block"><b>Give the EMA director:</b><br>
+        Sign in: ${esc(orgSignIn)}<br>Username: <code>${esc(username)}</code><br>Password: <code id="acct-pw-show">••••••••</code>
+        <button class="btn plain small" id="acct-reveal" type="button">Show</button>
+        <button class="btn plain small" id="acct-copy" type="button">Copy all</button></div>
+      <p class="muted">This password isn't stored anywhere by this page. Keep it in CUSEC's password records before closing.</p>`;
+    $('acct-reveal').onclick = () => { const s = $('acct-pw-show'); const hidden = s.textContent.startsWith('•'); s.textContent = hidden ? pw : '••••••••'; $('acct-reveal').textContent = hidden ? 'Hide' : 'Show'; };
+    $('acct-copy').onclick = async () => { try { await navigator.clipboard.writeText(`Sign in: ${orgSignIn}\nUsername: ${username}\nPassword: ${pw}`); $('acct-copy').textContent = 'Copied'; } catch (_) { $('acct-copy').textContent = 'Copy failed'; } };
+    for (const g of acctCtx.gids) { try { await groupMembers(g, true); } catch (_) {} }
+    acctCtx.onDone && acctCtx.onDone();
+  } catch (e) { say('err', esc(e.message), 'acct-msg'); }
+  finally { $('acct-create').disabled = false; }
+}
+async function loadLastLogins(usernames) {
+  await Promise.all(usernames.filter(u => lastLogins[u] === undefined).map(async u => {
+    try { const d = await rest(sharing(`community/users/${u}`)); lastLogins[u] = d.lastLogin ?? null; } catch (_) { lastLogins[u] = null; }
+  }));
+}
+const setupBadge = u => lastLogins[u] === -1 ? ' <span class="pill" style="background:var(--amber-lt);color:var(--amber)">setup not finished (never signed in)</span>' : '';
+
 // ── Import existing audiences from the "CUSEC RVS … Experience" apps ────────
 // "CUSEC RVS AR Experience" → State AR; "CUSEC RVS Craighead County AR Experience" → County Craighead, AR.
 // Groups = the groups the Experience is shared with, minus CUSEC RVS Management and any listed below.
@@ -1022,6 +1182,17 @@ async function addImported() {
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
+let userEdited = false;
+['a-first', 'a-last'].forEach(id => $(id).addEventListener('input', () => { if (!userEdited) { $('a-user').value = suggestUsername($('a-first').value, $('a-last').value); checkUsername(); } }));
+$('a-user').addEventListener('input', () => { userEdited = !!$('a-user').value; checkUsername(); });
+$('a-pass').addEventListener('input', () => { const p = passwordProblems($('a-pass').value); $('a-pass-hint').innerHTML = p.length ? `Needs ${esc(p.join(', '))}.` : '<span class="ok">✓ Meets the password rules</span>'; });
+$('a-show').onclick = () => { const t = $('a-pass').type === 'password'; $('a-pass').type = t ? 'text' : 'password'; $('a-show').textContent = t ? 'Hide' : 'Show'; };
+$('a-gen').onclick = () => { $('a-pass').value = generatePassword(); $('a-pass').type = 'text'; $('a-show').textContent = 'Hide'; $('a-pass').dispatchEvent(new Event('input')); };
+$('acct-create').onclick = createAccount;
+$('acct-cancel').onclick = () => { $('acct-dialog').classList.add('hidden'); $('a-pass').value = ''; };
+$('acct-msg').addEventListener('click', () => {});
+$('acct-dialog').addEventListener('click', e => { const a = e.target.closest('[data-useuser]'); if (a) { e.preventDefault(); $('a-user').value = a.dataset.useuser; userEdited = true; checkUsername(); } });
+$('grp-new-account').onclick = () => { if (selGroup) { userEdited = false; openAccount([selGroup], () => { drawMembers(groupInfo[selGroup].members); drawAudiences(); }); } };
 $('aud-import').onclick = openImport;
 $('imp-cancel').onclick = () => $('imp-dialog').classList.add('hidden');
 $('imp-add').onclick = addImported;
@@ -1050,6 +1221,7 @@ $('wz-body').addEventListener('click', e => {
   if (t.dataset.wzremove) wzMember(t.dataset.wzremove, false);
   if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
   if (t.dataset.wzdropgroup) wzDropGroup(t.dataset.wzdropgroup);
+  if (t.id === 'wz-new-account') { userEdited = false; openAccount([wz.peopleGroup].filter(Boolean), () => { wzLoadMembers(); drawAudiences(); }); }
 });
 $('auth-btn').onclick = () => token ? signOut() : signIn();
 $('gate-btn').onclick = signIn;
