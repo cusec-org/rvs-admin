@@ -438,7 +438,8 @@ async function saveAudience() {
     const payload = editing ? { updates: JSON.stringify([{ attributes: { ...attrs, [accessOid]: editing[accessOid] } }]) }
                             : { adds: JSON.stringify([{ attributes: attrs }]) };
     const res = await rest(`${accessUrl}/applyEdits`, payload, true);
-    const out = (res.addResults || res.updateResults || [])[0];
+    // ArcGIS returns addResults, updateResults and deleteResults together; read the one for this action
+    const out = (editing ? res.updateResults : res.addResults || [])?.[0];
     if (!out || !out.success) throw new Error(out?.error?.description || 'The table did not accept the change.');
     $('aud-dialog').classList.add('hidden');
     const done = `${editing ? 'Updated' : 'Added'} <b>${esc(r.AccessName)}</b>.` + (!r.ViewItemId && audienceWhere(r)
