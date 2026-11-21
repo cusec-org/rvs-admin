@@ -36,6 +36,17 @@ Each step saves as it goes, so you can close it and pick up later.
 **Edit** opens a single form for quick changes (names, notes, Active). Set **Active = No** to retire
 an audience (the row stays for history; hidden unless "Show inactive").
 
+## How the RVS Summary app uses this
+The RVS Summary app finds each person's views by the tag **`RVS Records`** (`CONFIG.viewTag`), which the wizard
+puts on every view it makes. Views made before that tag existed get it automatically when this page loads
+("Tagged 1 view…"). CUSEC RVS Management members see every record in the app.
+
+**Shared with the whole organization** (yellow box above the list): the read-only RVS layer and the reports
+view are shared with everyone in the Hub org, so **every** account (State, County, CWL) can open all records
+there, whatever its group. Use **Stop sharing with the organization** on each, **only after** the RVS Summary
+app update is live and every audience has its view; until then, people without a view would lose their
+records. CUSEC RVS Management keeps access. Reports need per-audience reports views first (not built yet).
+
 ## Importing the existing State and County audiences
 
 **Import existing audiences** reads every "CUSEC RVS … Experience" app and the groups it's shared with,
