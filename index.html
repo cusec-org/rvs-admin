@@ -176,7 +176,8 @@
         <div class="hint">Created in your organization, invitation only, visible to the organization; you'll be its owner.</div></div>
       <div><label for="f-view">View item ID</label><input id="f-view" placeholder="32-character item id" />
         <div class="hint" id="view-hint"></div></div>
-      <div><label for="f-dash">Dashboard URL</label><input id="f-dash" placeholder="https://…" /></div>
+      <div><label for="f-dash">Old Experience link</label><input id="f-dash" placeholder="https://…" />
+        <div class="hint">For reference only: being replaced by the RVS Summary app.</div></div>
       <div class="full"><label>Filter for this audience's view</label>
         <div class="code" id="f-filter">-</div>
         <div class="hint">When you create the view (RVS layer → Create view layer), set this as its filter and share it only with the group above.</div></div>
@@ -286,6 +287,7 @@ const CONFIG = {
   adminGroupId: '47c04ff75e3d4635a9be3b10fd5f6897',   // CUSEC RVS Management: may use this app, sees everything
   rvsItemId: '307585a0e7ed4c59aa94cb3c08c9ccfb',      // RVS layer: views are made from it; record counts
   rvsLayerIndex: 0,
+  summaryAppUrl: 'https://cusec-org.github.io/rvs-summary/',   // the one app every audience uses (replaces the per-audience Experiences)
   // Items that expose ALL RVS records. A State / County / Client group should reach the data only
   // through its own filtered view, so the wizard flags these if they're shared with the group.
   fullItems: ['307585a0e7ed4c59aa94cb3c08c9ccfb', '70d1f24a8ae34897b3769f587851a756'],
@@ -473,7 +475,7 @@ function drawAudiences() {
     }).join('');
     const view = !vid ? '<span class="warn">-</span>' : v?.missing ? '<span class="bad">not found</span>'
       : `<a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a>`
-        + (r.DashboardUrl ? `<div class="sub"><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">dashboard</a></div>` : '');
+        + (r.DashboardUrl ? `<div class="sub"><a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener" title="Being replaced by the RVS Summary app">old Experience</a></div>` : '');
     const c = counts[r[accessOid]];
     const ps = problems(r);
     const status = ps.length ? `<ul class="flags">${ps.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>` : '<span class="ok">OK</span>';
@@ -646,9 +648,9 @@ async function changeMember(username, add) {
 
 // ── Setup wizard ────────────────────────────────────────────────────────────
 // Walks a non-technical admin through an audience: who it's for → group → people → data view
-// (created, filtered and shared automatically) → dashboard → done. Every step saves as it goes,
+// (created, filtered and shared automatically) → done (they use the RVS Summary app). Every step saves as it goes,
 // so "Finish setup" on the Audiences tab resumes where it was left.
-const WZ_STEPS = ['Who', 'Group', 'People', 'Data view', 'Dashboard', 'Done'];
+const WZ_STEPS = ['Who', 'Group', 'People', 'Data view', 'Done'];
 const STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware',
   DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas',
   KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi',
@@ -681,7 +683,7 @@ function firstIncomplete(r) {
   if (!gids.length || gids.some(g => groupInfo[g]?.missing)) return 2;
   if (!vid || viewInfo[vid]?.missing || (viewShares[vid] && gids.some(g => !viewShares[vid].includes(g))) || gids.some(g => fullShares[g])) return 4;
   if (gids.every(g => (groupInfo[g]?.members || []).length <= 1)) return 3;
-  return 6;
+  return 5;
 }
 function openWizard(r) {
   wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null };
@@ -691,12 +693,12 @@ function openWizard(r) {
 function renderWizard() {
   const r = wzRow(), s = wz.step;
   $('wz-steps').innerHTML = WZ_STEPS.map((t, i) => `<div class="wz-step ${i + 1 === s ? 'on' : i + 1 < s ? 'done' : ''}">${i + 1}. ${t}</div>`).join('');
-  $('wz-back').classList.toggle('hidden', s === 1 || s === 6);
-  $('wz-next').classList.toggle('hidden', s === 6);
-  $('wz-next').textContent = s === 1 ? 'Save and continue' : s === 5 ? 'Save and finish' : 'Continue';
-  $('wz-close').textContent = s === 6 ? 'Close' : 'Close (progress is saved)';
+  $('wz-back').classList.toggle('hidden', s === 1 || s === 5);
+  $('wz-next').classList.toggle('hidden', s === 5);
+  $('wz-next').textContent = s === 1 ? 'Save and continue' : s === 4 ? 'Finish' : 'Continue';
+  $('wz-close').textContent = s === 5 ? 'Close' : 'Close (progress is saved)';
   wzSay(null, '');
-  $('wz-body').innerHTML = [null, wzWho, wzGroup, wzPeople, wzView, wzDash, wzDone][s](r);
+  $('wz-body').innerHTML = [null, wzWho, wzGroup, wzPeople, wzView, wzDone][s](r);
   if (s === 1) wzWhoSync();
   if (s === 3) wzLoadMembers();
 }
@@ -847,7 +849,7 @@ function wzView(r) {
   if (stillFull.length) {
     html += `<div class="big-status warn" style="display:block"><b>${stillFull.map(g => esc(gtitle(g))).join(' and ')} can still open the full RVS layer</b>
       (${esc([...new Set(stillFull.flatMap(g => fullShares[g]))].join(', '))}), which shows <b>all</b> records, including private clients'.<br>
-      <span class="muted">Stop sharing it only once ${stillFull.length > 1 ? 'these groups\'' : 'this group\'s'} dashboard and apps use the view above; otherwise they'll lose access to their data.</span><br>
+      <span class="muted">Stop sharing it only once ${stillFull.length > 1 ? 'these groups\'' : 'this group\'s'} RVS Summary app uses the view above (and its old Experience is retired); otherwise they'll lose access to their data.</span><br>
       <button class="btn danger small" id="wz-unshare-full" type="button" style="margin-top:8px">Stop sharing the full RVS layer with ${stillFull.length > 1 ? 'these groups' : 'this group'}</button></div>`;
   }
   return html;
@@ -904,7 +906,7 @@ async function wzShareView() {
 }
 async function wzUnshareFull() {
   const r = wzRow(), gids = gidsOf(r).filter(g => fullShares[g]), title = gids.map(gtitle).join(' and ') || 'this group';
-  if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after their dashboard and apps use the view, or they will lose access to their data.`)) return;
+  if (!confirm(`Stop sharing the full RVS layer with ${title}?\n\nMembers will then only see their own view. Do this only after the RVS Summary app uses their view (and their old Experience is retired), or they will lose access to their data.`)) return;
   try {
     for (const id of CONFIG.fullItems) {
       const owner = fullItemInfo[id]?.owner; if (!owner) continue;
@@ -921,12 +923,7 @@ async function wzUseView() {
   catch (e) { wzSay('err', esc(e.message)); }
 }
 
-// Step 5: dashboard; step 6: done
-function wzDash(r) {
-  return `<h3>Dashboard (optional)</h3>
-    <p class="muted">If this audience has its own ArcGIS dashboard, paste its link. Point the dashboard's data at the view from the previous step.</p>
-    <input id="wz-dash" value="${esc(r.DashboardUrl || '')}" placeholder="https://…" style="margin-top:10px">`;
-}
+// Step 5: done
 function wzDone(r) {
   const gids = gidsOf(r), vid = (r.ViewItemId || '').trim();
   const people = gids.reduce((n, g) => n + Math.max((groupInfo[g]?.members || []).length - 1, 0), 0);
@@ -936,8 +933,10 @@ function wzDone(r) {
     ${item(gids.length > 0 && !gids.some(g => groupInfo[g]?.missing), `Group${gids.length > 1 ? 's' : ''}: ${esc(gids.map(gtitle).join(', ') || '-')}`, 2)}
     ${item(people > 0, `People: ${people} besides the group owner${gids.length > 1 ? 's' : ''}`, 3)}
     ${item(!!vid && !viewInfo[vid]?.missing && !(viewShares[vid] && gids.some(g => !viewShares[vid].includes(g))), `Data view: ${esc(viewInfo[vid]?.title || '-')}, shared with ${gids.length > 1 ? 'every group' : 'the group'}`, 4)}
-    ${item(!gids.some(g => fullShares[g]), `${gids.length > 1 ? 'No group' : 'The group'} can open the full RVS layer any more`, 4)}
-    ${item(!!r.DashboardUrl, r.DashboardUrl ? `<a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">Dashboard</a>` : 'Dashboard (optional)', 5)}
+    ${item(!gids.some(g => fullShares[g]), gids.some(g => fullShares[g])
+      ? `${esc(gids.filter(g => fullShares[g]).map(gtitle).join(' and '))} can still open the full RVS layer (all records)`
+      : (gids.length > 1 ? 'None of the groups can open the full RVS layer any more' : 'The group can no longer open the full RVS layer'), 4)}
+    <li><span class="ok">→</span> Members open their records in the <a href="${esc(CONFIG.summaryAppUrl)}" target="_blank" rel="noopener">RVS Summary app</a>${r.DashboardUrl ? ` (replaces the <a href="${esc(r.DashboardUrl)}" target="_blank" rel="noopener">old Experience</a>)` : ''}</li>
   </ul>`;
 }
 
@@ -962,10 +961,6 @@ async function wzNext() {
         if (wzRow().ViewItemId) wzSay('warn', 'Group added. Share the view with it in step 4.');
       }
       wz.groupMode = 'keep';
-    } else if (s === 5) {
-      const url = $('wz-dash').value.trim();
-      if (url && !/^https:\/\//i.test(url)) { wzSay('err', 'The dashboard link should start with https://'); return; }
-      await writeRow({ DashboardUrl: url }, r[accessOid]);
     }
     wz.step = s + 1; renderWizard();
   } catch (e) { wzSay('err', esc(e.message)); }

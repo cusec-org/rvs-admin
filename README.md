@@ -17,7 +17,7 @@ Client group should open RVS data **only through its own view**, never the full 
 
 ## Setting up an audience: the wizard
 
-**Add audience** (or **Finish setup** on any audience that isn't complete) walks through six steps.
+**Add audience** (or **Finish setup** on any audience that isn't complete) walks through five steps.
 Each step saves as it goes, so you can close it and pick up later.
 
 1. **Who**: Client, County or State, and its name. The Client ID is made for you (locked once saved).
@@ -30,8 +30,8 @@ Each step saves as it goes, so you can close it and pick up later.
    If the group can still open the **full RVS layer** (true for the existing State and County groups
    today), it says so and offers **Stop sharing the full RVS layer with this group**. Do that **only
    after** that group's dashboard and apps use the new view, or its members lose access to their data.
-5. **Dashboard** (optional): paste the audience's dashboard link (point the dashboard at the view).
-6. **Done**: a checklist, with a **Fix** button next to anything still missing.
+5. **Done**: a checklist, with a **Fix** button next to anything still missing, and a link to the
+   **RVS Summary app**, which every audience uses (it replaces the per-audience Experiences).
 
 **Edit** opens a single form for quick changes (names, notes, Active). Set **Active = No** to retire
 an audience (the row stays for history; hidden unless "Show inactive").
@@ -44,7 +44,7 @@ and proposes one audience per app (CUSEC RVS Management left out):
   agency group (e.g. AR State Group + ADEM RVS Group).
 - "CUSEC RVS **Craighead County AR** Experience" → **County** Craighead, AR, with its county group. The
   county name comes from the county group, so "Cape County MO" becomes **Cape Girardeau**.
-- The Experience link becomes the audience's dashboard. Record counts are shown to sanity-check.
+- The Experience link is kept on the audience as its **old Experience** (reference only; the RVS Summary app replaces them). Record counts are shown to sanity-check.
 - **"MS - County RVS Group" is left out** of Mississippi (its statewide group is **MEMA RVS Group**); that
   group is to be removed. Add any other group to leave out in `IMPORT_SKIP_GROUPS` in `index.html`.
 Audiences already in the table are shown but not re-added. Nothing in ArcGIS changes except new rows.
