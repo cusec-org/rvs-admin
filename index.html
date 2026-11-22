@@ -109,6 +109,12 @@
   main { max-width: 1800px; padding: 20px 24px 48px; }
   .banner, #tab-aud > p.muted { max-width: 1250px; }
   #aud-rows td b { white-space: nowrap; }   /* audience names on one line */
+  /* type filter: one joined row of buttons */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; flex-shrink: 0; }
+  .seg button { font: inherit; font-size: 15px; padding: 9px 15px; border: 0; border-right: 1px solid var(--border); background: #fff; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: #f5f7fa; }
+  .seg button.on { background: var(--blue); color: #fff; font-weight: 600; }
   @media (max-width: 760px) { .grid, .split { grid-template-columns: 1fr; } header { padding: 0 16px; } #user-name { display: none; } }
 </style>
 </head>
@@ -139,6 +145,9 @@
     <!-- Audiences: the RVS Access table -->
     <section class="card" id="tab-aud">
       <div class="toolbar">
+        <div class="seg" id="aud-type" role="group" aria-label="Show audiences of type">
+          <button type="button" class="on" data-type="">All</button><button type="button" data-type="State">State</button><button type="button" data-type="County">County</button><button type="button" data-type="Client">Private client</button>
+        </div>
         <input type="search" id="aud-filter" placeholder="Filter by name, state, county, client or group…" />
         <label class="muted"><input type="checkbox" id="aud-inactive" style="width:auto"> Show inactive</label>
         <button class="btn plain" id="aud-refresh" type="button">Refresh</button>
@@ -545,9 +554,17 @@ function problems(r) {
 }
 
 // ── Audiences table ─────────────────────────────────────────────────────────
+let audType = '';   // '' = all, or State / County / Client (the type buttons above the table)
 function drawAudiences() {
   const q = $('aud-filter').value.trim().toLowerCase(), showInactive = $('aud-inactive').checked;
-  const list = rows.filter(r => (showInactive || r.Active !== 'No')
+  // counts on the type buttons follow "Show inactive"
+  const visible = rows.filter(r => showInactive || r.Active !== 'No');
+  document.querySelectorAll('#aud-type button').forEach(b => {
+    const t = b.dataset.type, n = visible.filter(r => !t || r.AccessType === t).length;
+    b.textContent = `${{ '': 'All', State: 'State', County: 'County', Client: 'Private client' }[t]} (${n})`;
+    b.classList.toggle('on', t === audType); b.setAttribute('aria-pressed', String(t === audType));
+  });
+  const list = rows.filter(r => (showInactive || r.Active !== 'No') && (!audType || r.AccessType === audType)
     && (!q || [r.AccessName, r.State, r.County, r.ClientId, r.ClientName, ...gidsOf(r).map(gtitle), r.GroupName].join(' ').toLowerCase().includes(q)));
   $('aud-rows').innerHTML = list.map(r => {
     const gids = gidsOf(r), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
@@ -571,7 +588,7 @@ function drawAudiences() {
       + `<td style="white-space:nowrap">${ps.some(([k]) => k === 'bad') || !gids.length || !vid
           ? `<button class="btn small" data-setup="${esc(r[accessOid])}" type="button">Finish setup</button> ` : `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">Setup</button> `}`
       + `<button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
-  }).join('') || '<tr><td colspan="8" class="muted">No audiences yet. Use “Add audience”.</td></tr>';
+  }).join('') || `<tr><td colspan="8" class="muted">${rows.length ? 'No audiences match the filter.' : 'No audiences yet. Use “Add audience”.'}</td></tr>`;
 }
 
 // ── Add / edit audience ─────────────────────────────────────────────────────
@@ -1313,6 +1330,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   $('tab-aud').classList.toggle('hidden', t.dataset.tab !== 'aud'); $('tab-grp').classList.toggle('hidden', t.dataset.tab !== 'grp');
 });
 $('aud-filter').oninput = drawAudiences; $('aud-inactive').onchange = drawAudiences;
+$('aud-type').onclick = e => { const b = e.target.closest('button[data-type]'); if (!b) return; audType = b.dataset.type; drawAudiences(); };
 $('aud-refresh').onclick = loadAll; $('aud-add').onclick = () => openWizard(null);
 $('aud-rows').onclick = e => {
   const b = e.target.closest('[data-edit]'), s = e.target.closest('[data-setup]');
