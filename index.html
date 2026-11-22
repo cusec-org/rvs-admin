@@ -104,6 +104,11 @@
   .checklist li { padding: 11px 0; }
   .banner { padding: 12px 16px; }
   .spinner { width: 15px; height: 15px; }
+  /* Wide screens: the page grows with the window (up to 1800px) so the table doesn't wrap;
+     long explanatory text stays at a readable line length */
+  main { max-width: 1800px; padding: 20px 24px 48px; }
+  .banner, #tab-aud > p.muted { max-width: 1250px; }
+  #aud-rows td b { white-space: nowrap; }   /* audience names on one line */
   @media (max-width: 760px) { .grid, .split { grid-template-columns: 1fr; } header { padding: 0 16px; } #user-name { display: none; } }
 </style>
 </head>
