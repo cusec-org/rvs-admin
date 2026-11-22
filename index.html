@@ -78,6 +78,32 @@
   .big-status.ok { background: var(--green-lt); color: var(--green); } .big-status.todo { background: #f2f4f7; color: var(--text-2); } .big-status.warn { background: var(--amber-lt); color: var(--amber); }
   .checklist { list-style: none; padding: 0; } .checklist li { padding: 7px 0; border-bottom: 1px solid var(--border); }
   .checklist li:last-child { border-bottom: 0; }
+  /* Larger text and buttons throughout (easier to read and click) */
+  body { font-size: 16px; }
+  header { height: 66px; } header h1 { font-size: 19px; } #user-name { font-size: 15px; }
+  .btn { padding: 11px 22px; font-size: 16px; border-radius: 8px; }
+  .btn.ghost { padding: 8px 18px; font-size: 15px; }
+  .btn.small { padding: 8px 15px; font-size: 15px; }
+  h2 { font-size: 21px; } h3 { font-size: 18px; }
+  .muted { font-size: 15.5px; } p { font-size: 16px; }
+  .tab { padding: 10px 20px; font-size: 16px; }
+  input, select, textarea { padding: 10px 12px; }
+  th, td { padding: 10px; }
+  .pill { font-size: 13.5px; padding: 3px 10px; }
+  .flags { font-size: 14.5px; }
+  .sub { font-size: 14px; }
+  code, .code { font-size: 14px; }
+  .grid label { font-size: 15px; margin-bottom: 5px; }
+  .hint { font-size: 14px; }
+  .member { padding: 10px 0; }
+  .dialog { max-width: 880px; padding: 26px 30px; }
+  .wz-step { font-size: 15px; padding: 10px; min-width: 110px; }
+  .wz-body { min-height: 260px; }
+  .choice { padding: 13px 15px; }
+  .choice > input[type=radio] { margin-top: 5px; transform: scale(1.25); }
+  .checklist li { padding: 11px 0; }
+  .banner { padding: 12px 16px; }
+  .spinner { width: 15px; height: 15px; }
   @media (max-width: 760px) { .grid, .split { grid-template-columns: 1fr; } header { padding: 0 16px; } #user-name { display: none; } }
 </style>
 </head>
