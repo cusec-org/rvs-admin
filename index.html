@@ -151,7 +151,8 @@
         <tbody id="aud-rows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
       </table></div>
       <p class="muted" style="margin-top:10px">One row per state, county or private client. A person sees the records of every active row whose group they belong to;
-        members of CUSEC RVS Management see everything. State and County rows only cover records with a blank <code>ClientId</code>.</p>
+        members of CUSEC RVS Management see everything. State and County rows cover the <b>state EMA's RVS program</b>: the State sees every
+        county's buildings, a County only its own. A private client's buildings (marked with its <code>ClientId</code>) are seen only by that client.</p>
     </section>
 
     <!-- Groups & members -->
@@ -551,7 +552,7 @@ function drawAudiences() {
   $('aud-rows').innerHTML = list.map(r => {
     const gids = gidsOf(r), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
     const scope = r.AccessType === 'Client' ? `ClientId = <code>${esc(r.ClientId || '?')}</code>`
-      : r.AccessType === 'County' ? `${esc(r.County || '?')}, ${esc(r.State || '?')}<div class="sub">blank ClientId</div>` : `${esc(r.State || '?')}<div class="sub">blank ClientId</div>`;
+      : r.AccessType === 'County' ? `${esc(r.County || '?')}, ${esc(r.State || '?')}<div class="sub">state EMA program, this county</div>` : `${esc(r.State || '?')}<div class="sub">state EMA program, all counties</div>`;
     const grp = !gids.length ? '<span class="warn">-</span>' : gids.map(gid => {
       const g = groupInfo[gid];
       return g?.missing ? `<div class="bad">${esc(gid)}</div>`
@@ -759,8 +760,11 @@ async function writeRow(attrs, oid) {
 }
 function describeAudience(r) {
   if (r.AccessType === 'Client') return `only <b>${esc(r.ClientName || r.AccessName)}</b>'s buildings (records tagged <code>${esc(r.ClientId)}</code>), wherever they are`;
-  if (r.AccessType === 'County') return `buildings in <b>${esc(r.County)} County, ${esc(r.State)}</b>, leaving out every private client's buildings`;
-  return `buildings in <b>${esc(STATE_NAMES[r.State] || r.AccessName || r.State)}</b>, leaving out every private client's buildings`;
+  // State / County records are the state EMA's RVS program; private clients (e.g. Jonesboro CWL) are separate
+  const clients = [...new Set(rows.filter(x => x.AccessType === 'Client' && x.Active !== 'No').map(x => x.ClientName || x.AccessName).filter(Boolean))];
+  const notClients = clients.length ? ` (not private clients' buildings, such as ${clients.map(esc).join(', ')})` : '';
+  if (r.AccessType === 'County') return `the state EMA program's buildings in <b>${esc(r.County)} County, ${esc(r.State)}</b> only${notClients}`;
+  return `<b>all</b> of the state EMA program's buildings in <b>${esc(STATE_NAMES[r.State] || r.AccessName || r.State)}</b>, every county${notClients}`;
 }
 function firstIncomplete(r) {
   if (!r) return 1;
@@ -917,8 +921,8 @@ function wzView(r) {
   const notShared = vid && viewShares[vid] ? gids.filter(g => !viewShares[vid].includes(g)) : [];
   const stillFull = gids.filter(g => fullShares[g]);
   let html = `<h3>The data ${gids.length > 1 ? 'these groups' : 'this group'} can open</h3>
-    <p class="muted">A <b>view</b> is a filtered copy of the RVS layer. This one will show ${describeAudience(r)}
-    ${typeof c === 'number' ? `(<b>${c}</b> record${c === 1 ? '' : 's'} today)` : ''}, and only members of
+    <p class="muted">A <b>view</b> is a filtered copy of the RVS layer. This one will show ${describeAudience(r)}.
+    ${typeof c === 'number' ? `That's <b>${c}</b> record${c === 1 ? '' : 's'} today. ` : ''}Only members of
     ${gids.length ? gids.map(g => `<b>${esc(gtitle(g))}</b>`).join(' and ') : 'the group'} can open it.</p>`;
   if (!vid || v?.missing) {
     html += `<div class="big-status todo">No view yet.</div>`
