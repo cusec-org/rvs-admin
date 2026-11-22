@@ -438,8 +438,9 @@ async function checkAudiences() {
 }
 // Views made before the RVS Summary app looked for CONFIG.viewTag: add it, so the app finds them
 async function tagViews() {
-  const need = Object.entries(viewInfo).filter(([, v]) => v && !v.missing && Array.isArray(v.tags)
+  const need = Object.entries(viewInfo).filter(([, v]) => v && !v.missing && !v.tagging && Array.isArray(v.tags)
     && !v.tags.some(t => String(t).toLowerCase() === CONFIG.viewTag.toLowerCase()));
+  need.forEach(([, v]) => { v.tagging = true; });    // a second check running at the same time leaves these alone
   let done = 0;
   for (const [vid, v] of need) {
     try {
@@ -453,11 +454,12 @@ async function tagViews() {
 // All-records items still shared with the whole organization (or everyone)
 let orgWide = [];
 async function loadOrgWide() {
-  orgWide = [];
-  await Promise.all((CONFIG.orgWideItems || []).map(async id => {
-    try { const it = await rest(sharing(`content/items/${id}`)); if (it.access === 'org' || it.access === 'public') orgWide.push({ id, title: it.title, owner: it.owner, access: it.access }); }
-    catch (_) { /* can't see it: nothing to say */ }
+  // build a fresh list and swap it in, so two checks running at once can't list an item twice
+  const found = await Promise.all((CONFIG.orgWideItems || []).map(async id => {
+    try { const it = await rest(sharing(`content/items/${id}`)); return (it.access === 'org' || it.access === 'public') ? { id, title: it.title, owner: it.owner, access: it.access } : null; }
+    catch (_) { return null; /* can't see it: nothing to say */ }
   }));
+  orgWide = found.filter(Boolean);
   drawOrgWide();
 }
 function drawOrgWide() {
