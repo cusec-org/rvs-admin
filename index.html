@@ -239,7 +239,7 @@
     <div id="acct-form">
       <p class="muted">Creates the ArcGIS account now, with the password you set (no invitation email), and adds it to
         <b id="acct-groups">the group</b>. CUSEC manages the account and gives the sign-in to the EMA director.</p>
-      <p class="hint hidden" id="acct-generic">Filled in with CUSEC's generic account pattern for this audience (e.g. AR-Craighead-CUSEC). Change anything you need.</p>
+      <p class="hint hidden" id="acct-generic">Filled in with CUSEC's generic account pattern for this audience (e.g. AR-Craighead-CUSEC, Jonesboro-CWL-CUSEC). Change anything you need.</p>
       <div class="grid" style="margin-top:10px">
         <div><label for="a-first">First name</label><input id="a-first" autocomplete="off" /></div>
         <div><label for="a-last">Last name</label><input id="a-last" autocomplete="off" /></div>
@@ -1207,7 +1207,8 @@ function checkUsername() {
   }, 400);
 }
 // CUSEC's generic accounts: County "AR-Craighead-CUSEC" (Craighead County / Arkansas);
-// State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from its "<AGENCY> RVS Group".
+// State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from its "<AGENCY> RVS Group";
+// Client "<name, spaces as dashes>-CUSEC" (e.g. Jonesboro-CWL-CUSEC: Jonesboro CWL / Client).
 // The audience is the one given, else the only audience using the group (a state's, if several share it).
 function audienceForGroups(gids) {
   const hits = rows.filter(r => r.Active !== 'No' && gidsOf(r).some(g => gids.includes(g)));
@@ -1217,6 +1218,11 @@ function genericAccount(r) {
   const st = String(r?.State || '').trim().toUpperCase(), co = String(r?.County || '').trim();
   if (r?.AccessType === 'County' && st && co) return { user: `${st}-${co.replace(/[^A-Za-z0-9]/g, '')}-CUSEC`,
     first: /\b(county|parish|tribe|nation)$/i.test(co) ? co : `${co} County`, last: stateName(st) };
+  if (r?.AccessType === 'Client') {   // e.g. "Jonesboro CWL" -> Jonesboro-CWL-CUSEC
+    const name = String(r.ClientName || r.AccessName || '').trim();
+    const base = name.replace(/[^A-Za-z0-9 -]/g, '').trim().replace(/[\s-]+/g, '-');
+    return base ? { user: `${base}-CUSEC`, first: name, last: 'Client' } : null;
+  }
   if (r?.AccessType === 'State' && st) {
     const agency = gidsOf(r).map(gtitle).map(t => (String(t).match(/^([A-Za-z]+) RVS Group$/) || [])[1]).find(Boolean);
     return agency ? { user: `${agency.toUpperCase()}-CUSEC`, first: st, last: agency.toUpperCase() } : { user: '', first: st, last: stateName(st) };
