@@ -776,7 +776,7 @@ function drawMembers(list) {
 }
 function paintMembers(list) {
   $('mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span>${setupBadge(m.username)}</div>`
-    + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-remove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('')
+    + `<div style="white-space:nowrap">${disableBtn(m)}${m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-remove="${esc(m.username)}" type="button">Remove</button>`}</div>` + '</div>').join('')
     || '<p class="muted">No members.</p>';
 }
 let searchTimer = null;
@@ -986,7 +986,7 @@ async function wzLoadMembers() {
     await loadLastLogins(list.map(m => m.username));
     if (!$('wz-mem-list')) return;
     $('wz-mem-list').innerHTML = list.map(m => `<div class="member"><div><b>${esc(m.username)}</b> <span class="sub">${esc(m.role)}</span>${setupBadge(m.username)}</div>`
-      + (m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-wzremove="${esc(m.username)}" type="button">Remove</button>`) + '</div>').join('');
+      + `<div style="white-space:nowrap">${disableBtn(m)}${m.role === 'owner' ? '<span class="sub">owner</span>' : `<button class="btn danger small" data-wzremove="${esc(m.username)}" type="button">Remove</button>`}</div>` + '</div>').join('');
   } catch (e) { $('wz-mem-list').innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
 }
 let wzTimer = null;
@@ -1166,6 +1166,7 @@ const ACCOUNT_DEFAULTS = { userType: 'HUBMemberUT', roleId: 'iAAAAAAAAAAAAAAA' }
 let orgAcct = null;                                    // { types, roles, policy }
 let acctCtx = null;                                    // { gids, onDone }
 const lastLogins = {};                                 // username -> ms (-1 = never)
+const disabledUsers = {};                              // username -> true when the account is disabled
 async function loadOrgAccountInfo() {
   if (orgAcct) return orgAcct;
   const [lic, roles, pol] = await Promise.all([
@@ -1333,10 +1334,28 @@ async function createAccount() {
 }
 async function loadLastLogins(usernames) {
   await Promise.all(usernames.filter(u => lastLogins[u] === undefined).map(async u => {
-    try { const d = await rest(sharing(`community/users/${u}`)); lastLogins[u] = d.lastLogin ?? null; } catch (_) { lastLogins[u] = null; }
+    try { const d = await rest(sharing(`community/users/${u}`)); lastLogins[u] = d.lastLogin ?? null; disabledUsers[u] = !!d.disabled; } catch (_) { lastLogins[u] = null; }
   }));
 }
-const setupBadge = u => lastLogins[u] === -1 ? ' <span class="pill" style="background:var(--amber-lt);color:var(--amber)">setup not finished (never signed in)</span>' : '';
+const setupBadge = u => (disabledUsers[u] ? ' <span class="pill" style="background:var(--bad-lt);color:var(--bad)">disabled (can\'t sign in)</span>' : '')
+  + (lastLogins[u] === -1 ? ' <span class="pill" style="background:var(--amber-lt);color:var(--amber)">setup not finished (never signed in)</span>' : '');
+// Disable / enable button for a member (not group owners, not yourself)
+const disableBtn = m => (m.role === 'owner' || m.username === me?.username || lastLogins[m.username] === undefined) ? ''
+  : `<button class="btn plain small" data-disable="${esc(m.username)}" data-on="${disabledUsers[m.username] ? '0' : '1'}" type="button">${disabledUsers[m.username] ? 'Enable account' : 'Disable account'}</button> `;
+// Disabling stops the account signing in anywhere; its groups and content are kept, so enabling restores everything
+async function setDisabled(username, disable, after) {
+  const msg = disable
+    ? `Disable the account ${username}?\n\nIt won't be able to sign in to ArcGIS Online at all (every group and app, not just this one). `
+      + `Its group memberships and content are kept, and you can enable it again here at any time.`
+    : `Enable the account ${username} again?\n\nIt will be able to sign in and see its groups' records again.`;
+  if (!confirm(msg)) return;
+  try {
+    await rest(sharing(`community/users/${encodeURIComponent(username)}/${disable ? 'disable' : 'enable'}`), {}, true);
+    disabledUsers[username] = disable;
+    say('ok', `${disable ? 'Disabled' : 'Enabled'} <b>${esc(username)}</b>.`);
+  } catch (e) { say('err', `Could not ${disable ? 'disable' : 'enable'} ${esc(username)}: ${esc(e.message)}`); }
+  after && after();
+}
 
 // ── Import existing audiences from the "CUSEC RVS … Experience" apps ────────
 // "CUSEC RVS AR Experience" → State AR; "CUSEC RVS Craighead County AR Experience" → County Craighead, AR.
@@ -1468,6 +1487,7 @@ $('wz-body').addEventListener('click', e => {
   if (t.id === 'wz-use-view') wzUseView();
   if (t.dataset.wzadd) wzMember(t.dataset.wzadd, true);
   if (t.dataset.wzremove) wzMember(t.dataset.wzremove, false);
+  if (t.dataset.disable) setDisabled(t.dataset.disable, t.dataset.on === '1', wzLoadMembers);
   if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
   if (t.dataset.wzdropgroup) wzDropGroup(t.dataset.wzdropgroup);
   if (t.id === 'wz-new-account') { userEdited = false; openAccount([wz.peopleGroup].filter(Boolean), () => { wzLoadMembers(); drawAudiences(); }, wzRow()); }
@@ -1509,7 +1529,9 @@ $('grp-save').onclick = async () => {
   catch (e) { say('err', esc(e.message), 'grp-dlg-msg'); } finally { $('grp-save').disabled = false; }
 };
 $('user-search').oninput = searchUsers;
-$('members-card').onclick = e => { const a = e.target.closest('[data-add]'), r = e.target.closest('[data-remove]'); if (a) changeMember(a.dataset.add, true); if (r) changeMember(r.dataset.remove, false); };
+$('members-card').onclick = e => { const a = e.target.closest('[data-add]'), r = e.target.closest('[data-remove]'), d = e.target.closest('[data-disable]');
+  if (a) changeMember(a.dataset.add, true); if (r) changeMember(r.dataset.remove, false);
+  if (d) setDisabled(d.dataset.disable, d.dataset.on === '1', () => { if (selGroup && groupInfo[selGroup]?.members) paintMembers(groupInfo[selGroup].members); }); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.dialog-bg').forEach(d => d.classList.add('hidden')); });
 
 (function init() {
