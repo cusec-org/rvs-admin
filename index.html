@@ -237,17 +237,24 @@
     <h2 id="acct-title">Create an account</h2>
     <div id="acct-msg"></div>
     <div id="acct-form">
-      <p class="muted">Creates the ArcGIS account now, with the password you set (no invitation email), and adds it to
-        <b id="acct-groups">the group</b>. CUSEC manages the account and gives the sign-in to the EMA director.</p>
+      <p class="muted">Makes an ArcGIS account in <b id="acct-groups">the group</b>. CUSEC manages the account and gives the sign-in to the EMA director.</p>
+      <fieldset style="border:0;padding:0;margin:10px 0 0">
+        <legend style="font-weight:600;margin-bottom:4px">How is the password set?</legend>
+        <label class="choice on"><input type="radio" name="a-mode" value="now" checked><div><b>Set it now</b><br>
+          <span class="muted">The account is created right away with the password you type. No email is sent.</span></div></label>
+        <label class="choice"><input type="radio" name="a-mode" value="email"><div><b>Email a setup link</b><br>
+          <span class="muted">ArcGIS emails the address below a link to choose the password and security question (link good for 14 days).
+          The account joins the group when the link is used.</span></div></label>
+      </fieldset>
       <p class="hint hidden" id="acct-generic">Filled in with CUSEC's generic account pattern for this audience (e.g. AR-Craighead-CUSEC, Jonesboro-CWL-CUSEC). Change anything you need.</p>
       <div class="grid" style="margin-top:10px">
         <div><label for="a-first">First name</label><input id="a-first" autocomplete="off" /></div>
         <div><label for="a-last">Last name</label><input id="a-last" autocomplete="off" /></div>
         <div class="full"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="off" />
-          <div class="hint">ArcGIS requires one; it's used for password resets. No email is sent now.</div></div>
+          <div class="hint" id="a-email-hint">ArcGIS requires one; it's used for password resets. No email is sent now.</div></div>
         <div class="full"><label for="a-user">Username</label><input id="a-user" autocomplete="off" />
           <div class="hint" id="a-user-hint">Usernames are unique across all of ArcGIS Online.</div></div>
-        <div class="full"><label for="a-pass">Password</label>
+        <div class="full" id="a-pass-row"><label for="a-pass">Password</label>
           <div style="display:flex;gap:8px"><input id="a-pass" type="password" autocomplete="new-password" />
             <button class="btn plain small" id="a-show" type="button">Show</button>
             <button class="btn plain small" id="a-gen" type="button">Generate</button></div>
@@ -1236,6 +1243,7 @@ async function openAccount(gids, onDone, aud) {
   const gen = genericAccount(aud || audienceForGroups(gids));
   if (gen) { $('a-first').value = gen.first; $('a-last').value = gen.last; $('a-user').value = gen.user; userEdited = !!gen.user; if (gen.user) checkUsername(); }
   $('acct-generic').classList.toggle('hidden', !gen);
+  document.querySelector('input[name="a-mode"][value="now"]').checked = true; syncAcctMode();
   $('a-pass').type = 'password'; $('a-show').textContent = 'Show';
   $('acct-form').classList.remove('hidden'); $('acct-done').classList.add('hidden'); $('acct-create').classList.remove('hidden');
   $('acct-cancel').textContent = 'Cancel'; say(null, '', 'acct-msg');
@@ -1248,23 +1256,57 @@ async function openAccount(gids, onDone, aud) {
     p.minUpper && `${p.minUpper} capital`, p.minOther && `${p.minOther} symbol`].filter(Boolean).join(', ')}.`;
   $('a-first').focus();
 }
+// "now": create the account with the password typed here; "email": ArcGIS emails a link to set the password
+const acctMode = () => (document.querySelector('input[name="a-mode"]:checked') || {}).value || 'now';
+const INVITE_DAYS = 14;
+function syncAcctMode() {
+  const email = acctMode() === 'email';
+  document.querySelectorAll('input[name="a-mode"]').forEach(x => x.closest('.choice').classList.toggle('on', x.checked));
+  $('a-pass-row').classList.toggle('hidden', email);
+  $('a-email-hint').textContent = email ? 'The setup link is sent here. Use a mailbox someone will check within 14 days.'
+    : "ArcGIS requires one; it's used for password resets. No email is sent now.";
+  $('acct-create').textContent = email ? 'Send setup email' : 'Create account';
+}
 async function createAccount() {
   const first = $('a-first').value.trim(), last = $('a-last').value.trim(), email = $('a-email').value.trim();
-  const username = $('a-user').value.trim(), pw = $('a-pass').value;
+  const username = $('a-user').value.trim(), byEmail = acctMode() === 'email', pw = byEmail ? '' : $('a-pass').value;
   const errs = [];
   if (!first || !last) errs.push('Enter the first and last name.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.push('Enter a valid email.');
   if (!/^[A-Za-z0-9_.@-]{6,128}$/.test(username)) errs.push('The username must be at least 6 characters: letters, numbers, _ . @ - only.');
-  const pp = passwordProblems(pw); if (pp.length) errs.push('The password needs ' + pp.join(', ') + '.');
-  if (pw && (pw.toLowerCase().includes(username.toLowerCase()) && username)) errs.push("The password can't contain the username.");
+  if (!byEmail) {
+    const pp = passwordProblems(pw); if (pp.length) errs.push('The password needs ' + pp.join(', ') + '.');
+    if (pw && (pw.toLowerCase().includes(username.toLowerCase()) && username)) errs.push("The password can't contain the username.");
+  }
   if (errs.length) { say('err', errs.map(esc).join('<br>'), 'acct-msg'); return; }
-  $('acct-create').disabled = true; say('ok', '<span class="spinner"></span>Creating the account…', 'acct-msg');
+  $('acct-create').disabled = true; say('ok', `<span class="spinner"></span>${byEmail ? 'Sending the setup email' : 'Creating the account'}…`, 'acct-msg');
   try {
-    const inv = { email, firstname: first, lastname: last, fullname: `${first} ${last}`, username, password: pw,
+    const inv = { email, firstname: first, lastname: last, fullname: `${first} ${last}`, username,
       role: $('a-role').value, userLicenseType: $('a-type').value, userType: 'arcgisonly', groups: acctCtx.gids.join(','),
       userCreditAssignment: -1, applyActUserDefaults: false };
-    const r = await rest(sharing('portals/self/invite'), { invitationList: JSON.stringify({ invitations: [inv] }), message: '' }, true);
-    if (r.success === false || (r.notInvited || []).length) throw new Error(`ArcGIS did not create ${(r.notInvited || [username]).join(', ')}. The username or email may already be in use.`);
+    if (!byEmail) inv.password = pw;
+    const params = { invitationList: JSON.stringify({ invitations: [inv] }) };
+    if (byEmail) Object.assign(params, { subject: 'Your CUSEC RVS account',
+      html: `<p>CUSEC has set up an ArcGIS account for you to use the RVS (Rapid Visual Screening) Summary app.</p>`
+        + `<p>Username: <b>${esc(username)}</b></p><p>Use the link in this email to choose your password and security question. The link is good for ${INVITE_DAYS} days.</p>`
+        + `<p>Afterwards, open the RVS Summary app at <a href="${esc(CONFIG.summaryAppUrl)}">${esc(CONFIG.summaryAppUrl)}</a> and sign in.</p>`,
+      expiration: String(INVITE_DAYS * 24 * 60) });
+    else params.message = '';
+    const r = await rest(sharing('portals/self/invite'), params, true);
+    if (r.success === false || (r.notInvited || []).length) throw new Error(`ArcGIS did not ${byEmail ? 'invite' : 'create'} ${(r.notInvited || [username]).join(', ')}. The username or email may already be in use.`);
+    if (byEmail) {
+      $('acct-form').classList.add('hidden'); $('acct-create').classList.add('hidden'); $('acct-cancel').textContent = 'Done';
+      say('ok', `Sent the setup email for <b>${esc(username)}</b> to <b>${esc(email)}</b>.`, 'acct-msg');
+      $('acct-done').classList.remove('hidden');
+      $('acct-done').innerHTML = `<h3>What happens next</h3>
+        <ul style="padding-left:18px;line-height:1.7">
+          <li>The email comes from ArcGIS Online (check spam if it doesn't arrive). The link is good for ${INVITE_DAYS} days.</li>
+          <li>When the link is used, the account is created, the person chooses the password and security question,
+            and the account joins ${esc(acctCtx.gids.map(gtitle).join(' and '))}. Until then it doesn't show in the group's members.</li>
+          <li>To resend or cancel it: ArcGIS Online → Organization → Members, under the pending invitations.</li>
+        </ul>`;
+      return;
+    }
     lastLogins[username] = -1;
     const orgSignIn = `${CONFIG.orgUrl}/home/signin.html`;
     $('acct-form').classList.add('hidden'); $('acct-create').classList.add('hidden'); $('acct-cancel').textContent = 'Done';
@@ -1393,6 +1435,7 @@ $('a-pass').addEventListener('input', () => { const p = passwordProblems($('a-pa
 $('a-show').onclick = () => { const t = $('a-pass').type === 'password'; $('a-pass').type = t ? 'text' : 'password'; $('a-show').textContent = t ? 'Hide' : 'Show'; };
 $('a-gen').onclick = () => { $('a-pass').value = generatePassword(); $('a-pass').type = 'text'; $('a-show').textContent = 'Hide'; $('a-pass').dispatchEvent(new Event('input')); };
 $('acct-create').onclick = createAccount;
+document.querySelectorAll('input[name="a-mode"]').forEach(x => x.addEventListener('change', syncAcctMode));
 $('acct-cancel').onclick = () => { $('acct-dialog').classList.add('hidden'); $('a-pass').value = ''; };
 $('acct-msg').addEventListener('click', () => {});
 $('acct-dialog').addEventListener('click', e => { const a = e.target.closest('[data-useuser]'); if (a) { e.preventDefault(); $('a-user').value = a.dataset.useuser; userEdited = true; checkUsername(); } });
