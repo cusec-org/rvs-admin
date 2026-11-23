@@ -155,6 +155,7 @@
         <button class="btn" id="aud-add" type="button">Add audience</button>
       </div>
       <div id="org-wide"></div>
+      <div id="uncovered"></div>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Type</th><th>Audience</th><th>Sees records where</th><th>Group</th><th>View</th><th>Records</th><th>Status</th><th></th></tr></thead>
         <tbody id="aud-rows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
@@ -453,7 +454,7 @@ async function loadFullShares() {
 }
 async function checkAudiences() {
   if (!rvsUrl) { try { rvsUrl = await itemUrl(CONFIG.rvsItemId, CONFIG.rvsLayerIndex); } catch (_) { rvsUrl = null; } }
-  await loadFullShares(); drawAudiences();
+  await Promise.all([loadFullShares(), loadAreas()]); drawAudiences();
   await Promise.all(rows.map(async r => {
     const vid = (r.ViewItemId || '').trim();
     for (const gid of gidsOf(r)) {
@@ -524,6 +525,52 @@ async function stopOrgWide(id) {
   await loadOrgWide();
 }
 
+// ── States and counties in the data (state EMA program records only, not private clients) ──
+// [{State, County, n}], spelled exactly as in the RVS layer, so the wizard's dropdowns give views that match records
+let areas = null;
+async function loadAreas() {
+  if (!rvsUrl) return;
+  try {
+    const r = await rest(`${rvsUrl}/query`, { where: BLANK_CLIENT, groupByFieldsForStatistics: 'State,County', returnGeometry: 'false',
+      outStatistics: JSON.stringify([{ statisticType: 'count', onStatisticField: 'objectid', outStatisticFieldName: 'n' }]) });
+    areas = (r.features || []).map(f => f.attributes).map(a => ({ State: String(a.State || '').trim().toUpperCase(), County: String(a.County || '').trim(), n: a.n || a.N || 0 }))
+      .filter(a => a.State);
+  } catch (e) { console.warn('could not load the states and counties in the data', e); areas = null; }
+}
+const stateName = st => STATE_NAMES[st] || st;
+function stateCounts() {
+  const m = {}; (areas || []).forEach(a => { m[a.State] = (m[a.State] || 0) + a.n; }); return m;
+}
+const countyKey = (st, co) => `${st}|${String(co || '').trim().toLowerCase()}`;
+// States and counties that have records but no audience of their own (inactive rows count as set up)
+function uncovered() {
+  if (!areas) return { states: [], counties: [] };
+  const haveSt = new Set(rows.filter(r => r.AccessType === 'State').map(r => String(r.State || '').trim().toUpperCase()));
+  const haveCo = new Set(rows.filter(r => r.AccessType === 'County').map(r => countyKey(String(r.State || '').trim().toUpperCase(), r.County)));
+  const sc = stateCounts();
+  return {
+    states: Object.keys(sc).filter(st => !haveSt.has(st)).sort((a, b) => stateName(a).localeCompare(stateName(b))).map(st => ({ State: st, n: sc[st] })),
+    counties: areas.filter(a => a.County && !haveCo.has(countyKey(a.State, a.County)))
+      .sort((a, b) => stateName(a.State).localeCompare(stateName(b.State)) || a.County.localeCompare(b.County)),
+  };
+}
+let uncoveredOpen = false;
+function drawUncovered() {
+  const el = $('uncovered'); if (!el) return;
+  const u = uncovered(), total = u.states.length + u.counties.length;
+  if (!total) { el.innerHTML = ''; return; }
+  const btn = (type, st, co) => `<button class="btn plain small" data-newarea="${esc(type)}|${esc(st)}|${esc(co || '')}" type="button">Set up</button>`;
+  const line = (label, n, b) => `<li style="margin:3px 0">${label} <span class="sub">${n} record${n === 1 ? '' : 's'}</span> ${b}</li>`;
+  el.innerHTML = `<details class="banner ${u.states.length ? 'warn' : 'ok'}" ${uncoveredOpen ? 'open' : ''} style="display:block">
+    <summary style="cursor:pointer"><b>${total} ${total === 1 ? 'place has' : 'places have'} survey records but no audience of ${total === 1 ? 'its' : 'their'} own</b>
+      (${[u.states.length && `${u.states.length} state${u.states.length === 1 ? '' : 's'}`, u.counties.length && `${u.counties.length} count${u.counties.length === 1 ? 'y' : 'ies'}`].filter(Boolean).join(', ')})</summary>
+    ${u.states.length ? `<p style="margin:8px 0 4px"><b>States:</b> only CUSEC RVS Management sees these records until the state has an audience.</p>
+      <ul style="margin:0 0 6px 18px">${u.states.map(s => line(esc(stateName(s.State)), s.n, btn('State', s.State))).join('')}</ul>` : ''}
+    ${u.counties.length ? `<p style="margin:8px 0 4px"><b>Counties:</b> their records are already in their state's view. Set one up only if the county's own people need access.</p>
+      <ul style="margin:0 0 6px 18px">${u.counties.map(c => line(`${esc(c.County)}, ${esc(c.State)}`, c.n, btn('County', c.State, c.County))).join('')}</ul>` : ''}
+  </details>`;
+}
+
 // ── Access rule ─────────────────────────────────────────────────────────────
 const BLANK_CLIENT = "(ClientId IS NULL OR ClientId = '')";
 // An audience can have several groups (e.g. a state's "AR State Group" + its agency's "ADEM RVS Group"):
@@ -589,6 +636,7 @@ function drawAudiences() {
           ? `<button class="btn small" data-setup="${esc(r[accessOid])}" type="button">Finish setup</button> ` : `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">Setup</button> `}`
       + `<button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
   }).join('') || `<tr><td colspan="8" class="muted">${rows.length ? 'No audiences match the filter.' : 'No audiences yet. Use “Add audience”.'}</td></tr>`;
+  drawUncovered();
 }
 
 // ── Add / edit audience ─────────────────────────────────────────────────────
@@ -791,8 +839,9 @@ function firstIncomplete(r) {
   if (gids.every(g => (groupInfo[g]?.members || []).length <= 1)) return 3;
   return 5;
 }
-function openWizard(r) {
-  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null };
+// preset (new audiences only): {AccessType, State, County} filled in from the "no audience" list
+function openWizard(r, preset) {
+  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null, preset: r ? null : preset || null };
   $('wz-title').textContent = r ? `Set up: ${r.AccessName}` : 'Set up a new audience';
   $('wz-dialog').classList.remove('hidden'); renderWizard();
 }
@@ -805,23 +854,51 @@ function renderWizard() {
   $('wz-close').textContent = s === 5 ? 'Close' : 'Close (progress is saved)';
   wzSay(null, '');
   $('wz-body').innerHTML = [null, wzWho, wzGroup, wzPeople, wzView, wzDone][s](r);
-  if (s === 1) wzWhoSync();
+  if (s === 1) { wzCountyPicked(); wzWhoSync(); }
   if (s === 3) wzLoadMembers();
 }
 
 // Step 1: who is it for
+// State dropdown: states with records first (with counts), then every other state
+function wzStateOptions(cur) {
+  const sc = stateCounts(), withData = Object.keys(sc).sort((a, b) => stateName(a).localeCompare(stateName(b)));
+  const others = Object.keys(STATE_NAMES).filter(s => !sc[s]).sort((a, b) => stateName(a).localeCompare(stateName(b)));
+  if (cur && !sc[cur] && !STATE_NAMES[cur]) others.unshift(cur);
+  const o = s => `<option value="${esc(s)}" ${s === cur ? 'selected' : ''}>${esc(stateName(s))} (${esc(s)})${sc[s] ? ` - ${sc[s]} records` : ''}</option>`;
+  return `<option value="">Choose a state…</option>`
+    + (withData.length ? `<optgroup label="States with survey records">${withData.map(o).join('')}</optgroup><optgroup label="No records yet">` : '<optgroup label="States">')
+    + others.map(o).join('') + '</optgroup>';
+}
+// County dropdown: that state's counties as spelled in the data, then "Other" for a county with no records yet
+function wzCountyOptions(st, cur) {
+  const list = (areas || []).filter(a => a.State === st && a.County).sort((a, b) => a.County.localeCompare(b.County));
+  const taken = new Set(rows.filter(o => o.AccessType === 'County' && o[accessOid] !== wz?.oid).map(o => countyKey(String(o.State || '').trim().toUpperCase(), o.County)));
+  const hit = list.find(a => a.County.toLowerCase() === String(cur || '').trim().toLowerCase());
+  return `<option value="">${st ? (list.length ? 'Choose a county…' : 'No records in this state yet') : 'Choose the state first'}</option>`
+    + list.map(a => { const used = taken.has(countyKey(st, a.County));
+        return `<option value="${esc(a.County)}" ${hit === a ? 'selected' : ''} ${used ? 'disabled' : ''}>${esc(a.County)} - ${a.n} record${a.n === 1 ? '' : 's'}${used ? ' (already set up)' : ''}</option>`; }).join('')
+    + (st ? `<option value="__other__" ${cur && !hit ? 'selected' : ''}>Other (no records yet)…</option>` : '');
+}
+function wzCountyPicked() {
+  const v = $('wz-county-pick').value, other = v === '__other__';
+  $('wz-county').classList.toggle('hidden', !other);
+  if (!other) $('wz-county').value = v;
+  $('wz-county-hint').classList.toggle('hidden', !other);
+}
 function wzWho(r) {
-  const t = r?.AccessType || 'Client';
+  const p = r || wz.preset, t = p?.AccessType || 'Client', st = String(p?.State || '').trim().toUpperCase();
   return `<h3>Who is this audience?</h3>
     <p class="muted">A <b>client</b> is a private customer (like Jonesboro CWL). A <b>state</b> or <b>county</b> is the public program.</p>
     <div class="grid" style="margin-top:10px">
       <div><label for="wz-type">Type</label><select id="wz-type" ${r ? 'disabled' : ''}>
         ${['Client', 'County', 'State'].map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-      <div><label for="wz-state">State (2 letters)</label><input id="wz-state" maxlength="2" value="${esc(r?.State || '')}" placeholder="AR" /></div>
+      <div><label for="wz-state">State</label><select id="wz-state">${wzStateOptions(st)}</select></div>
       <div class="full wz-client"><label for="wz-clientname">Client name</label><input id="wz-clientname" value="${esc(r?.ClientName || '')}" placeholder="Jonesboro CWL" /></div>
       <div class="wz-client"><label for="wz-clientid">Client ID (made for you)</label><input id="wz-clientid" value="${esc(r?.ClientId || '')}" ${r?.ClientId ? 'readonly' : ''} />
         <div class="hint">${r?.ClientId ? 'Locked: views and exports use it.' : 'The tag put on this client\'s RVS records. Can\'t be changed later.'}</div></div>
-      <div class="full wz-county"><label for="wz-county">County (without the word “County”)</label><input id="wz-county" value="${esc(r?.County || '')}" placeholder="Craighead" /></div>
+      <div class="full wz-county"><label for="wz-county-pick">County</label><select id="wz-county-pick">${wzCountyOptions(st, p?.County)}</select>
+        <input id="wz-county" class="hidden" style="margin-top:6px" value="${esc(p?.County || '')}" placeholder="County name, without the word “County”" aria-label="County name" />
+        <div class="hint hidden" id="wz-county-hint">Spell it the way the field data will (e.g. “St. Louis”), or the view will show no records.</div></div>
       <div class="full wz-name"><label for="wz-name">Name shown in this admin app</label><input id="wz-name" value="${esc(r?.AccessName || '')}" /></div>
     </div>
     <p class="muted" id="wz-who-desc" style="margin-top:12px"></p>`;
@@ -843,8 +920,8 @@ function wzWhoSync() {
 }
 function wzWhoErrors(v, r) {
   const e = [];
-  if (!/^[A-Z]{2}$/.test(v.State) && !(v.AccessType === 'Client' && !v.State)) e.push('Enter the 2-letter state.');
-  if (v.AccessType === 'County' && !v.County) e.push('Enter the county.');
+  if (!/^[A-Z]{2}$/.test(v.State) && !(v.AccessType === 'Client' && !v.State)) e.push('Choose the state.');
+  if (v.AccessType === 'County' && !v.County) e.push('Choose the county, or pick “Other” and type it.');
   if (v.AccessType === 'Client') {
     if (!v.ClientName) e.push('Enter the client name.');
     if (!/^[a-z0-9_]{2,60}$/.test(v.ClientId)) e.push('The Client ID must be 2-60 lowercase letters, numbers or _.');
@@ -1307,6 +1384,8 @@ $('wz-body').addEventListener('input', e => { if (e.target.closest('#wz-type, #w
   if (e.target.id === 'wz-user-search') wzSearch(); });
 $('wz-body').addEventListener('change', e => {
   if (e.target.id === 'wz-type') wzWhoSync();
+  if (e.target.id === 'wz-state') { $('wz-county-pick').innerHTML = wzCountyOptions(e.target.value, ''); $('wz-county').value = ''; wzCountyPicked(); wzWhoSync(); }
+  if (e.target.id === 'wz-county-pick') { wzCountyPicked(); if (e.target.value === '__other__') $('wz-county').focus(); wzWhoSync(); }
   if (e.target.name === 'wz-gmode') { wz.groupMode = e.target.value; document.querySelectorAll('.choice').forEach(c => c.classList.toggle('on', c.contains(e.target))); }
   if (e.target.id === 'wz-existing') { wz.groupMode = 'existing'; const radio = document.querySelector('input[value="existing"]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
   if (e.target.id === 'wz-pgroup') { wz.peopleGroup = e.target.value; renderWizard(); }
@@ -1338,6 +1417,12 @@ $('aud-rows').onclick = e => {
   if (s) openWizard(rows.find(r => String(r[accessOid]) === s.dataset.setup));
 };
 $('org-wide').onclick = e => { const b = e.target.closest('[data-orgoff]'); if (b) stopOrgWide(b.dataset.orgoff); };
+$('uncovered').addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') uncoveredOpen = e.target.open; }, true);
+$('uncovered').onclick = e => {
+  const b = e.target.closest('[data-newarea]'); if (!b) return;
+  const [AccessType, State, County] = b.dataset.newarea.split('|');
+  openWizard(null, { AccessType, State, County });
+};
 ['f-type', 'f-group', 'f-state', 'f-county', 'f-view'].forEach(id => $(id).addEventListener('input', syncForm));
 ['f-type', 'f-group'].forEach(id => $(id).addEventListener('change', syncForm));
 $('f-clientname').addEventListener('input', () => { if (!$('f-clientid').readOnly) { $('f-clientid').value = slug($('f-clientname').value); syncForm(); } if (!$('f-name').value) $('f-name').value = $('f-clientname').value; });
