@@ -239,6 +239,7 @@
     <div id="acct-form">
       <p class="muted">Creates the ArcGIS account now, with the password you set (no invitation email), and adds it to
         <b id="acct-groups">the group</b>. CUSEC manages the account and gives the sign-in to the EMA director.</p>
+      <p class="hint hidden" id="acct-generic">Filled in with CUSEC's generic account pattern for this audience (e.g. AR-Craighead-CUSEC). Change anything you need.</p>
       <div class="grid" style="margin-top:10px">
         <div><label for="a-first">First name</label><input id="a-first" autocomplete="off" /></div>
         <div><label for="a-last">Last name</label><input id="a-last" autocomplete="off" /></div>
@@ -1205,10 +1206,30 @@ function checkUsername() {
     } catch (_) { $('a-user-hint').textContent = 'Usernames are unique across all of ArcGIS Online.'; }
   }, 400);
 }
-async function openAccount(gids, onDone) {
+// CUSEC's generic accounts: County "AR-Craighead-CUSEC" (Craighead County / Arkansas);
+// State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from its "<AGENCY> RVS Group".
+// The audience is the one given, else the only audience using the group (a state's, if several share it).
+function audienceForGroups(gids) {
+  const hits = rows.filter(r => r.Active !== 'No' && gidsOf(r).some(g => gids.includes(g)));
+  return hits.length === 1 ? hits[0] : hits.find(r => r.AccessType === 'State') || null;
+}
+function genericAccount(r) {
+  const st = String(r?.State || '').trim().toUpperCase(), co = String(r?.County || '').trim();
+  if (r?.AccessType === 'County' && st && co) return { user: `${st}-${co.replace(/[^A-Za-z0-9]/g, '')}-CUSEC`,
+    first: /\b(county|parish|tribe|nation)$/i.test(co) ? co : `${co} County`, last: stateName(st) };
+  if (r?.AccessType === 'State' && st) {
+    const agency = gidsOf(r).map(gtitle).map(t => (String(t).match(/^([A-Za-z]+) RVS Group$/) || [])[1]).find(Boolean);
+    return agency ? { user: `${agency.toUpperCase()}-CUSEC`, first: st, last: agency.toUpperCase() } : { user: '', first: st, last: stateName(st) };
+  }
+  return null;
+}
+async function openAccount(gids, onDone, aud) {
   acctCtx = { gids, onDone };
   $('acct-groups').textContent = gids.map(gtitle).join(' and ') || 'no group';
   ['a-first', 'a-last', 'a-email', 'a-user', 'a-pass'].forEach(id => { $(id).value = ''; });
+  const gen = genericAccount(aud || audienceForGroups(gids));
+  if (gen) { $('a-first').value = gen.first; $('a-last').value = gen.last; $('a-user').value = gen.user; userEdited = !!gen.user; if (gen.user) checkUsername(); }
+  $('acct-generic').classList.toggle('hidden', !gen);
   $('a-pass').type = 'password'; $('a-show').textContent = 'Show';
   $('acct-form').classList.remove('hidden'); $('acct-done').classList.add('hidden'); $('acct-create').classList.remove('hidden');
   $('acct-cancel').textContent = 'Cancel'; say(null, '', 'acct-msg');
@@ -1400,7 +1421,7 @@ $('wz-body').addEventListener('click', e => {
   if (t.dataset.wzremove) wzMember(t.dataset.wzremove, false);
   if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
   if (t.dataset.wzdropgroup) wzDropGroup(t.dataset.wzdropgroup);
-  if (t.id === 'wz-new-account') { userEdited = false; openAccount([wz.peopleGroup].filter(Boolean), () => { wzLoadMembers(); drawAudiences(); }); }
+  if (t.id === 'wz-new-account') { userEdited = false; openAccount([wz.peopleGroup].filter(Boolean), () => { wzLoadMembers(); drawAudiences(); }, wzRow()); }
 });
 $('auth-btn').onclick = () => token ? signOut() : signIn();
 $('gate-btn').onclick = signIn;
