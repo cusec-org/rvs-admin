@@ -43,6 +43,11 @@
   tr.inactive td { opacity: .55; }
   .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .t-State { background: #ede7fb; color: #5b3cc4; } .t-County { background: var(--blue-lt); color: var(--blue); } .t-Client { background: var(--amber-lt); color: var(--amber); }
+  .t-Partner { background: #e3f4ec; color: #1d7a4d; }
+  .wz-states { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; max-height: 220px; overflow-y: auto;
+    border: 1px solid #d5dae3; border-radius: 6px; padding: 8px 10px; }
+  .wz-states label { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 0; cursor: pointer; }
+  .wz-states input { width: auto; margin: 0; }
   .ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--bad); }
   .flags { margin: 0; padding-left: 16px; font-size: 12.5px; }
   .sub { color: var(--text-3); font-size: 12px; }
@@ -170,7 +175,7 @@
     <section class="card" id="tab-aud">
       <div class="toolbar">
         <div class="seg" id="aud-type" role="group" aria-label="Show audiences of type">
-          <button type="button" class="on" data-type="">All</button><button type="button" data-type="State">State</button><button type="button" data-type="County">County</button><button type="button" data-type="Client">Private client</button>
+          <button type="button" class="on" data-type="">All</button><button type="button" data-type="State">State</button><button type="button" data-type="County">County</button><button type="button" data-type="Partner">Partner</button><button type="button" data-type="Client">Private client</button>
         </div>
         <input type="search" id="aud-filter" placeholder="Filter by name, state, county, client or group…" />
         <label class="muted"><input type="checkbox" id="aud-inactive" style="width:auto"> Show inactive</label>
@@ -227,11 +232,11 @@
     <div id="aud-dlg-msg"></div>
     <div class="grid">
       <div><label for="f-type">Type</label>
-        <select id="f-type"><option>Client</option><option>County</option><option>State</option></select></div>
+        <select id="f-type"><option>Client</option><option>County</option><option>State</option><option>Partner</option></select></div>
       <div><label for="f-active">Active</label>
         <select id="f-active"><option>Yes</option><option>No</option></select></div>
       <div class="full"><label for="f-name">Audience name</label><input id="f-name" placeholder="e.g. Jonesboro CWL, Craighead County, AR, Arkansas" /></div>
-      <div><label for="f-state">State (2 letters)</label><input id="f-state" maxlength="2" placeholder="AR" /></div>
+      <div><label for="f-state">State (2 letters; a partner lists several: NV,OR)</label><input id="f-state" maxlength="200" placeholder="AR" /></div>
       <div class="only-county"><label for="f-county">County (as stored on RVS records, no “County”)</label><input id="f-county" placeholder="Craighead" /></div>
       <div class="only-client"><label for="f-clientname">Client name (shown in apps and reports)</label><input id="f-clientname" placeholder="Jonesboro CWL" /></div>
       <div class="only-client"><label for="f-clientid">Client ID (key on RVS records)</label><input id="f-clientid" placeholder="jonesboro_cwl" />
@@ -506,6 +511,7 @@ async function checkAudiences() {
       catch (_) { viewInfo[vid] = { missing: true }; }
     }
     if (vid && viewInfo[vid] && !viewInfo[vid].missing) { try { viewShares[vid] = await itemGroupIds(vid); } catch (_) {} }
+    if (vid && viewInfo[vid]?.url && !viewInfo[vid].missing) await loadViewWhere(vid);
     if (rvsUrl && audienceWhere(r)) {
       try { const c = await rest(`${rvsUrl}/query`, { where: audienceWhere(r), returnCountOnly: 'true' }); counts[r[accessOid]] = c.count; }
       catch (_) { counts[r[accessOid]] = 'err'; }
@@ -514,6 +520,25 @@ async function checkAudiences() {
   }));
   await tagViews();
   await loadOrgWide();
+}
+// The filter a view actually applies (its layer's viewDefinitionQuery), to spot one that no longer matches its audience
+async function loadViewWhere(vid) {
+  try {
+    const l = await rest(`${String(viewInfo[vid].url).replace(/\/+$/, '').replace(/\/\d+$/, '')}/${CONFIG.rvsLayerIndex}`);
+    viewInfo[vid].where = l.viewDefinitionQuery || l.definitionQuery || '';
+  } catch (_) { /* can't read it: no flag */ }
+}
+// Put the audience's current filter on its view (after a partner's states change)
+async function updateViewFilter(r) {
+  const vid = (r.ViewItemId || '').trim(), where = audienceWhere(r);
+  if (!vid || !where) throw new Error('This audience has no view or no filter yet.');
+  const svc = String(viewInfo[vid]?.url || (await rest(sharing(`content/items/${vid}`))).url).replace(/\/+$/, '').replace(/\/\d+$/, '');
+  await rest(`${svc.replace('/rest/services/', '/rest/admin/services/')}/${CONFIG.rvsLayerIndex}/updateDefinition`,
+    { updateDefinition: JSON.stringify({ viewDefinitionQuery: where }) }, true);
+  const owner = viewInfo[vid]?.owner || me.username;
+  await rest(sharing(`content/users/${owner}/items/${vid}/update`),
+    { snippet: `RVS records for ${r.AccessName} only. Filter: ${where}. Made by RVS Access Admin.` }, true).catch(() => {});
+  viewInfo[vid].where = where;
 }
 // Views made before the RVS Summary app looked for CONFIG.viewTag: add it, so the app finds them
 async function tagViews() {
@@ -610,21 +635,32 @@ function drawUncovered() {
 
 // ── Access rule ─────────────────────────────────────────────────────────────
 const BLANK_CLIENT = "(ClientId IS NULL OR ClientId = '')";
+const normWhere = w => String(w || '').replace(/\s+/g, ' ').trim().toLowerCase();
 // An audience can have several groups (e.g. a state's "AR State Group" + its agency's "ADEM RVS Group"):
 // GroupId / GroupName hold comma-separated lists, in the same order.
 const gidsOf = r => [...new Set(String(r?.GroupId || '').split(',').map(s => s.trim()).filter(Boolean))];
 const gtitle = id => groupInfo[id]?.title || id;
 const groupFields = ids => ({ GroupId: ids.join(',') || null, GroupName: ids.map(gtitle).join(', ') || null });
+// A Partner (e.g. CREW, which manages data collection for several states) lists its states in State, comma-separated: "NV,OR"
+const statesOf = r => [...new Set(String(r?.State || '').toUpperCase().split(/[\s,;]+/).filter(Boolean))].sort();
+const statesText = r => statesOf(r).map(s => stateName(s)).join(', ');
 function audienceWhere(r) {
   const st = (r.State || '').trim().toUpperCase(), co = (r.County || '').trim(), cid = (r.ClientId || '').trim();
   if (r.AccessType === 'Client') return cid ? `ClientId = ${sqlStr(cid)}` : '';
+  if (r.AccessType === 'Partner') {                    // the state EMA program's records in its states, not private clients'
+    const sts = statesOf(r); if (!sts.length) return '';
+    return (sts.length === 1 ? `State = ${sqlStr(sts[0])}` : `State IN (${sts.map(sqlStr).join(', ')})`) + ` AND ${BLANK_CLIENT}`;
+  }
   if (r.AccessType === 'County') return st && co ? `State = ${sqlStr(st)} AND County = ${sqlStr(co)} AND ${BLANK_CLIENT}` : '';
   if (r.AccessType === 'State') return st ? `State = ${sqlStr(st)} AND ${BLANK_CLIENT}` : '';
   return '';
 }
 function problems(r) {
   const p = [], gids = gidsOf(r), vid = (r.ViewItemId || '').trim();
-  if (!audienceWhere(r)) p.push(['bad', r.AccessType === 'Client' ? 'No Client ID' : r.AccessType === 'County' ? 'Needs State and County' : 'Needs State']);
+  if (!audienceWhere(r)) p.push(['bad', r.AccessType === 'Client' ? 'No Client ID' : r.AccessType === 'County' ? 'Needs State and County' : r.AccessType === 'Partner' ? 'Needs at least one state' : 'Needs State']);
+  // the view's own filter no longer matches the audience (e.g. a state was added to a partner): it shows the wrong records
+  const vw = viewInfo[vid]?.where;
+  if (vid && vw && audienceWhere(r) && normWhere(vw) !== normWhere(audienceWhere(r))) p.push(['bad', "View's filter is out of date"]);
   if (!gids.length) p.push(['warn', 'No group yet']);
   gids.filter(g => groupInfo[g]?.missing).forEach(g => p.push(['bad', `Group not found: ${r.GroupName || g}`]));
   if (gids.length && gids.every(g => groupInfo[g]?.members && groupInfo[g].members.length <= 1)) p.push(['warn', 'No members besides the group owner']);
@@ -645,7 +681,7 @@ function drawAudiences() {
   const visible = rows.filter(r => showInactive || r.Active !== 'No');
   document.querySelectorAll('#aud-type button').forEach(b => {
     const t = b.dataset.type, n = visible.filter(r => !t || r.AccessType === t).length;
-    b.textContent = `${{ '': 'All', State: 'State', County: 'County', Client: 'Private client' }[t]} (${n})`;
+    b.textContent = `${{ '': 'All', State: 'State', County: 'County', Partner: 'Partner', Client: 'Private client' }[t]} (${n})`;
     b.classList.toggle('on', t === audType); b.setAttribute('aria-pressed', String(t === audType));
   });
   const list = rows.filter(r => (showInactive || r.Active !== 'No') && (!audType || r.AccessType === audType)
@@ -653,6 +689,7 @@ function drawAudiences() {
   $('aud-rows').innerHTML = list.map(r => {
     const gids = gidsOf(r), vid = (r.ViewItemId || '').trim(), v = viewInfo[vid];
     const scope = r.AccessType === 'Client' ? `ClientId = <code>${esc(r.ClientId || '?')}</code>`
+      : r.AccessType === 'Partner' ? `${esc(statesOf(r).join(', ') || '?')}<div class="sub">state EMA program, ${statesOf(r).length === 1 ? 'this state' : 'these states'}</div>`
       : r.AccessType === 'County' ? `${esc(r.County || '?')}, ${esc(r.State || '?')}<div class="sub">state EMA program, this county</div>` : `${esc(r.State || '?')}<div class="sub">state EMA program, all counties</div>`;
     const grp = !gids.length ? '<span class="warn">-</span>' : gids.map(gid => {
       const g = groupInfo[gid];
@@ -721,12 +758,19 @@ function syncForm() {
 }
 function suggestGroupTitle() {
   const r = formRow();
-  return r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}` : `RVS State - ${r.AccessName || r.State}`;
+  return groupTitleFor(r);
+}
+function groupTitleFor(r) {
+  return r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}`
+    : r.AccessType === 'Partner' ? `RVS Partner - ${r.AccessName}` : `RVS State - ${r.AccessName || r.State}`;
 }
 function validate(r) {
   const e = [];
   if (!r.AccessName) e.push('Give the audience a name.');
-  if (!/^[A-Z]{2}$/.test(r.State) && !(r.AccessType === 'Client' && !r.State)) e.push('State must be a 2-letter code.');
+  if (r.AccessType === 'Partner') {
+    if (!statesOf(r).length || statesOf(r).some(s => !/^[A-Z]{2}$/.test(s))) e.push('List the partner\'s states as 2-letter codes, e.g. NV,OR.');
+    else r.State = statesOf(r).join(',');
+  } else if (!/^[A-Z]{2}$/.test(r.State) && !(r.AccessType === 'Client' && !r.State)) e.push('State must be a 2-letter code.');
   if (r.AccessType === 'County' && !r.County) e.push('Enter the county.');
   if (r.AccessType === 'Client') {
     if (!/^[a-z0-9_]{2,60}$/.test(r.ClientId)) e.push('Client ID must be 2-60 lowercase letters, numbers or _.');
@@ -866,6 +910,7 @@ function describeAudience(r) {
   const clients = [...new Set(rows.filter(x => x.AccessType === 'Client' && x.Active !== 'No').map(x => x.ClientName || x.AccessName).filter(Boolean))];
   const notClients = clients.length ? ` (not private clients' buildings, such as ${clients.map(esc).join(', ')})` : '';
   if (r.AccessType === 'County') return `the state EMA program's buildings in <b>${esc(r.County)} County, ${esc(r.State)}</b> only${notClients}`;
+  if (r.AccessType === 'Partner') return `<b>all</b> of the state EMA program's buildings in <b>${esc(statesText(r) || '-')}</b>, every county${notClients}`;
   return `<b>all</b> of the state EMA program's buildings in <b>${esc(STATE_NAMES[r.State] || r.AccessName || r.State)}</b>, every county${notClients}`;
 }
 function firstIncomplete(r) {
@@ -906,6 +951,14 @@ function wzStateOptions(cur) {
     + (withData.length ? `<optgroup label="States with survey records">${withData.map(o).join('')}</optgroup><optgroup label="No records yet">` : '<optgroup label="States">')
     + others.map(o).join('') + '</optgroup>';
 }
+// Partner: a tick box per state, states with records first (with counts)
+function wzStateChecks(cur) {
+  const sc = stateCounts(), sel = new Set(cur || []);
+  const all = [...new Set([...Object.keys(sc), ...Object.keys(STATE_NAMES), ...sel])]
+    .sort((a, b) => (sc[b] ? 1 : 0) - (sc[a] ? 1 : 0) || stateName(a).localeCompare(stateName(b)));
+  return `<div class="wz-states" id="wz-states">${all.map(s => `<label><input type="checkbox" value="${esc(s)}" ${sel.has(s) ? 'checked' : ''}>
+    ${esc(stateName(s))} (${esc(s)})${sc[s] ? ` <span class="sub">${sc[s]}</span>` : ''}</label>`).join('')}</div>`;
+}
 // County dropdown: that state's counties as spelled in the data, then "Other" for a county with no records yet
 function wzCountyOptions(st, cur) {
   const list = (areas || []).filter(a => a.State === st && a.County).sort((a, b) => a.County.localeCompare(b.County));
@@ -925,11 +978,14 @@ function wzCountyPicked() {
 function wzWho(r) {
   const p = r || wz.preset, t = p?.AccessType || 'Client', st = String(p?.State || '').trim().toUpperCase();
   return `<h3>Who is this audience?</h3>
-    <p class="muted">A <b>client</b> is a private customer (like Jonesboro CWL). A <b>state</b> or <b>county</b> is the public program.</p>
+    <p class="muted">A <b>client</b> is a private customer (like Jonesboro CWL). A <b>state</b> or <b>county</b> is the public program.
+      A <b>partner</b> is an organization that manages data collection for one or more states (like CREW); it sees the public program's records in those states.</p>
     <div class="grid" style="margin-top:10px">
       <div><label for="wz-type">Type</label><select id="wz-type" ${r ? 'disabled' : ''}>
-        ${['Client', 'County', 'State'].map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-      <div><label for="wz-state">State</label><select id="wz-state">${wzStateOptions(st)}</select></div>
+        ${['Client', 'County', 'State', 'Partner'].map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="wz-onestate"><label for="wz-state">State</label><select id="wz-state">${wzStateOptions(t === 'Partner' ? '' : st)}</select></div>
+      <div class="full wz-partner"><label>States this partner covers</label>${wzStateChecks(t === 'Partner' ? statesOf(p) : [])}
+        <div class="hint">Add a state here later and the admin page updates the partner's view to match (step 4).</div></div>
       <div class="full wz-client"><label for="wz-clientname">Client name</label><input id="wz-clientname" value="${esc(r?.ClientName || '')}" placeholder="Jonesboro CWL" /></div>
       <div class="wz-client"><label for="wz-clientid">Client ID (made for you)</label><input id="wz-clientid" value="${esc(r?.ClientId || '')}" ${r?.ClientId ? 'readonly' : ''} />
         <div class="hint">${r?.ClientId ? 'Locked: views and exports use it.' : 'The tag put on this client\'s RVS records. Can\'t be changed later.'}</div></div>
@@ -942,9 +998,11 @@ function wzWho(r) {
 }
 function wzWhoValues() {
   const t = $('wz-type').value;
-  const state = $('wz-state').value.trim().toUpperCase(), county = $('wz-county').value.trim().replace(/\s+(county|parish)$/i, '');
+  const state = t === 'Partner' ? [...document.querySelectorAll('#wz-states input:checked')].map(c => c.value).sort().join(',')
+    : $('wz-state').value.trim().toUpperCase();
+  const county = $('wz-county').value.trim().replace(/\s+(county|parish)$/i, '');
   const cname = $('wz-clientname').value.trim();
-  const name = $('wz-name').value.trim() || (t === 'Client' ? cname : t === 'County' ? (county && state ? `${county} County, ${state}` : '') : (STATE_NAMES[state] || state));
+  const name = $('wz-name').value.trim() || (t === 'Client' ? cname : t === 'County' ? (county && state ? `${county} County, ${state}` : '') : t === 'Partner' ? '' : (STATE_NAMES[state] || state));
   return { AccessType: t, AccessName: name, State: state, County: t === 'County' ? county : '',
            ClientId: t === 'Client' ? $('wz-clientid').value.trim() : '', ClientName: t === 'Client' ? cname : '' };
 }
@@ -952,12 +1010,16 @@ function wzWhoSync() {
   const t = $('wz-type').value;
   document.querySelectorAll('.wz-client').forEach(e => e.classList.toggle('hidden', t !== 'Client'));
   document.querySelectorAll('.wz-county').forEach(e => e.classList.toggle('hidden', t !== 'County'));
+  document.querySelectorAll('.wz-partner').forEach(e => e.classList.toggle('hidden', t !== 'Partner'));
+  document.querySelectorAll('.wz-onestate').forEach(e => e.classList.toggle('hidden', t === 'Partner'));
+  $('wz-name').placeholder = t === 'Partner' ? 'Short name, e.g. CREW' : '';
   const v = wzWhoValues();
   $('wz-who-desc').innerHTML = audienceWhere(v) ? `This audience will see ${describeAudience(v)}.` : '';
 }
 function wzWhoErrors(v, r) {
   const e = [];
-  if (!/^[A-Z]{2}$/.test(v.State) && !(v.AccessType === 'Client' && !v.State)) e.push('Choose the state.');
+  if (v.AccessType === 'Partner') { if (!statesOf(v).length) e.push('Tick at least one state.'); }
+  else if (!/^[A-Z]{2}$/.test(v.State) && !(v.AccessType === 'Client' && !v.State)) e.push('Choose the state.');
   if (v.AccessType === 'County' && !v.County) e.push('Choose the county, or pick “Other” and type it.');
   if (v.AccessType === 'Client') {
     if (!v.ClientName) e.push('Enter the client name.');
@@ -965,7 +1027,7 @@ function wzWhoErrors(v, r) {
     if (rows.some(o => o !== r && (o.ClientId || '') === v.ClientId)) e.push(`Client ID "${v.ClientId}" is already used.`);
   }
   if (!v.AccessName) e.push('Enter a name.');
-  const dup = rows.find(o => o !== r && audienceWhere(o) && audienceWhere(o) === audienceWhere(v));
+  const dup = rows.find(o => o !== r && o.AccessType === v.AccessType && audienceWhere(o) && audienceWhere(o) === audienceWhere(v));   // a partner may share a state's records
   if (dup) e.push(`"${dup.AccessName}" already covers these records.`);
   return e;
 }
@@ -973,7 +1035,7 @@ function wzWhoErrors(v, r) {
 // Step 2: group
 function wzGroup(r) {
   const gids = gidsOf(r), have = gids.length > 0;
-  const suggested = r.AccessType === 'Client' ? `RVS Client - ${r.ClientName || r.AccessName}` : r.AccessType === 'County' ? `RVS County - ${r.County}, ${r.State}` : `RVS State - ${r.AccessName}`;
+  const suggested = groupTitleFor(r);
   const opt = (mode, html) => `<label class="choice ${wz.groupMode === mode ? 'on' : ''}"><input type="radio" name="wz-gmode" value="${mode}" ${wz.groupMode === mode ? 'checked' : ''}><div>${html}</div></label>`;
   return `<h3>Which ArcGIS group${have && gids.length > 1 ? 's are' : ' is'} this audience?</h3>
     <p class="muted">Everyone in ${gids.length > 1 ? 'these groups' : 'the group'} will see ${describeAudience(r)}.
@@ -1062,6 +1124,10 @@ function wzView(r) {
       + `<p class="muted" style="margin-top:10px">Already made one? Paste its item ID: <input id="wz-view-id" placeholder="32-character item id" style="width:300px"> <button class="btn plain small" id="wz-use-view" type="button">Use it</button></p>`;
   } else {
     html += `<div class="big-status ok">✓ View ready: <a href="${CONFIG.orgUrl}/home/item.html?id=${esc(vid)}" target="_blank" rel="noopener">${esc(v?.title || vid)}</a></div>`;
+    if (v?.where && audienceWhere(r) && normWhere(v.where) !== normWhere(audienceWhere(r)))
+      html += `<div class="big-status warn" style="display:block"><b>The view's filter is out of date.</b> It shows <code>${esc(v.where)}</code>;
+        this audience should see <code>${esc(audienceWhere(r))}</code>.<br>
+        <button class="btn small" id="wz-update-filter" type="button" style="margin-top:8px">Update the view's filter</button></div>`;
     if (notShared.length)
       html += `<div class="big-status warn">The view isn't shared with ${notShared.map(g => `<b>${esc(gtitle(g))}</b>`).join(' and ')} yet, so ${notShared.length > 1 ? 'their' : 'its'} members can't open it.
         <button class="btn small" id="wz-share-view" type="button">Share it</button></div>`;
@@ -1117,6 +1183,11 @@ async function createView(r) {
   viewInfo[created.itemId] = { title: `RVS - ${r.AccessName} (view)`, owner: me.username };
   return created.itemId;
 }
+async function wzUpdateFilter() {
+  const r = wzRow(); wzSay('ok', '<span class="spinner"></span>Updating the view\'s filter…');
+  try { await updateViewFilter(r); await checkAudiences(); wzSay('ok', `Updated. <b>${esc(counts[r[accessOid]] ?? '?')}</b> records are visible in the view.`); $('wz-body').innerHTML = wzView(wzRow()); }
+  catch (e) { wzSay('err', 'Could not update the filter: ' + esc(e.message) + ' (needs the view\'s owner or an organization administrator).'); }
+}
 async function wzShareView() {
   const r = wzRow(), vid = r.ViewItemId, owner = viewInfo[vid]?.owner || me.username;
   try {
@@ -1153,6 +1224,7 @@ function wzDone(r) {
     ${item(gids.length > 0 && !gids.some(g => groupInfo[g]?.missing), `Group${gids.length > 1 ? 's' : ''}: ${esc(gids.map(gtitle).join(', ') || '-')}`, 2)}
     ${item(people > 0, `People: ${people} besides the group owner${gids.length > 1 ? 's' : ''}`, 3)}
     ${item(!!vid && !viewInfo[vid]?.missing && !(viewShares[vid] && gids.some(g => !viewShares[vid].includes(g))), `Data view: ${esc(viewInfo[vid]?.title || '-')}, shared with ${gids.length > 1 ? 'every group' : 'the group'}`, 4)}
+    ${vid && viewInfo[vid]?.where && normWhere(viewInfo[vid].where) !== normWhere(audienceWhere(r)) ? item(false, "The view's filter is out of date", 4) : ''}
     ${item(!gids.some(g => fullShares[g]), gids.some(g => fullShares[g])
       ? `${esc(gids.filter(g => fullShares[g]).map(gtitle).join(' and '))} can still open the full RVS layer (all records)`
       : (gids.length > 1 ? 'None of the groups can open the full RVS layer any more' : 'The group can no longer open the full RVS layer'), 4)}
@@ -1169,6 +1241,11 @@ async function wzNext() {
       if (errs.length) { wzSay('err', errs.map(esc).join('<br>')); return; }
       if (!r) v.Active = 'Yes';
       wz.oid = await writeRow(v, r ? r[accessOid] : null);
+      // states changed on an audience that already has a view: put the new filter on the view too
+      if (r && (r.ViewItemId || '').trim() && normWhere(audienceWhere(r)) !== normWhere(audienceWhere(v))) {
+        try { await updateViewFilter(wzRow()); await checkAudiences(); }
+        catch (e) { wz.step = 4; renderWizard(); wzSay('err', `Saved, but the view's filter couldn't be updated: ${esc(e.message)}. Use “Update the view's filter” below.`); return; }
+      }
     } else if (s === 2) {
       const mode = document.querySelector('input[name="wz-gmode"]:checked')?.value || 'new';
       if (mode === 'new') {
@@ -1245,7 +1322,7 @@ function checkUsername() {
 }
 // CUSEC's generic accounts: County "AR-Craighead-CUSEC" (Craighead County / Arkansas);
 // State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from its "<AGENCY> RVS Group";
-// Client "<name, spaces as dashes>-CUSEC" (e.g. Jonesboro-CWL-CUSEC: Jonesboro CWL / Client).
+// Client "<name, spaces as dashes>-CUSEC" (e.g. Jonesboro-CWL-CUSEC: Jonesboro CWL / Client); Partner the same (CREW-CUSEC: CREW / Partner).
 // The audience is the one given, else the only audience using the group (a state's, if several share it).
 function audienceForGroups(gids) {
   const hits = rows.filter(r => r.Active !== 'No' && gidsOf(r).some(g => gids.includes(g)));
@@ -1255,10 +1332,10 @@ function genericAccount(r) {
   const st = String(r?.State || '').trim().toUpperCase(), co = String(r?.County || '').trim();
   if (r?.AccessType === 'County' && st && co) return { user: `${st}-${co.replace(/[^A-Za-z0-9]/g, '')}-CUSEC`,
     first: /\b(county|parish|tribe|nation)$/i.test(co) ? co : `${co} County`, last: stateName(st) };
-  if (r?.AccessType === 'Client') {   // e.g. "Jonesboro CWL" -> Jonesboro-CWL-CUSEC
-    const name = String(r.ClientName || r.AccessName || '').trim();
+  if (r?.AccessType === 'Client' || r?.AccessType === 'Partner') {   // e.g. "Jonesboro CWL" -> Jonesboro-CWL-CUSEC, "CREW" -> CREW-CUSEC
+    const name = String((r.AccessType === 'Client' && r.ClientName) || r.AccessName || '').trim();
     const base = name.replace(/[^A-Za-z0-9 -]/g, '').trim().replace(/[\s-]+/g, '-');
-    return base ? { user: `${base}-CUSEC`, first: name, last: 'Client' } : null;
+    return base ? { user: `${base}-CUSEC`, first: name, last: r.AccessType === 'Partner' ? 'Partner' : 'Client' } : null;
   }
   if (r?.AccessType === 'State' && st) {
     const agency = gidsOf(r).map(gtitle).map(t => (String(t).match(/^([A-Za-z]+) RVS Group$/) || [])[1]).find(Boolean);
@@ -1501,7 +1578,7 @@ $('wz-body').addEventListener('input', e => { if (e.target.closest('#wz-type, #w
   wzWhoSync(); }
   if (e.target.id === 'wz-user-search') wzSearch(); });
 $('wz-body').addEventListener('change', e => {
-  if (e.target.id === 'wz-type') wzWhoSync();
+  if (e.target.id === 'wz-type' || e.target.closest('#wz-states')) wzWhoSync();
   if (e.target.id === 'wz-state') { $('wz-county-pick').innerHTML = wzCountyOptions(e.target.value, ''); $('wz-county').value = ''; wzCountyPicked(); wzWhoSync(); }
   if (e.target.id === 'wz-county-pick') { wzCountyPicked(); if (e.target.value === '__other__') $('wz-county').focus(); wzWhoSync(); }
   if (e.target.name === 'wz-gmode') { wz.groupMode = e.target.value; document.querySelectorAll('.choice').forEach(c => c.classList.toggle('on', c.contains(e.target))); }
@@ -1512,6 +1589,7 @@ $('wz-body').addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t) return;
   if (t.id === 'wz-create-view') wzCreateView();
   if (t.id === 'wz-share-view') wzShareView();
+  if (t.id === 'wz-update-filter') wzUpdateFilter();
   if (t.id === 'wz-unshare-full') wzUnshareFull();
   if (t.id === 'wz-use-view') wzUseView();
   if (t.dataset.wzadd) wzMember(t.dataset.wzadd, true);
