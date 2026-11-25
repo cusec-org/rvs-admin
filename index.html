@@ -1369,7 +1369,7 @@ function checkUsername() {
   }, 400);
 }
 // CUSEC's generic accounts: County "AR-Craighead-CUSEC" (Craighead County / Arkansas);
-// State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from its "<AGENCY> RVS Group";
+// State "<agency>-CUSEC" (e.g. ADEM-CUSEC: AR / ADEM), the agency taken from an old "<AGENCY> RVS Group" title or the group's <AGENCY>-CUSEC member;
 // Client "<name, spaces as dashes>-CUSEC" (e.g. Jonesboro-CWL-CUSEC: Jonesboro CWL / Client); Partner the same (CREW-CUSEC: CREW / Partner).
 // The audience is the one given, else the only audience using the group (a state's, if several share it).
 function audienceForGroups(gids) {
@@ -1386,7 +1386,10 @@ function genericAccount(r) {
     return base ? { user: `${base}-CUSEC`, first: name, last: r.AccessType === 'Partner' ? 'Partner' : 'Client' } : null;
   }
   if (r?.AccessType === 'State' && st) {
-    const agency = gidsOf(r).map(gtitle).map(t => (String(t).match(/^([A-Za-z]+) RVS Group$/) || [])[1]).find(Boolean);
+    // the agency: from an old "<AGENCY> RVS Group" title, else from the agency account already in the group (e.g. ADEM-CUSEC;
+    // county accounts like AR-Lawrence-CUSEC have two dashes and don't match)
+    const agency = gidsOf(r).map(gtitle).map(t => (String(t).match(/^([A-Za-z]+) RVS Group$/) || [])[1]).find(Boolean)
+      || gidsOf(r).flatMap(g => groupInfo[g]?.members || []).map(m => (String(m.username).match(/^([A-Za-z]{3,})-CUSEC$/i) || [])[1]).find(Boolean);
     return agency ? { user: `${agency.toUpperCase()}-CUSEC`, first: st, last: agency.toUpperCase() } : { user: '', first: st, last: stateName(st) };
   }
   return null;
