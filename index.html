@@ -73,6 +73,7 @@
   .wz-step { flex: 1; min-width: 92px; font-size: 12px; padding: 6px 8px; border-radius: 6px; background: #f2f4f7; color: var(--text-3); text-align: center; }
   .wz-step.on { background: var(--blue); color: #fff; font-weight: 600; }
   .wz-step.done { background: var(--green-lt); color: var(--green); }
+  button.wz-step { border: 0; font: inherit; font-size: 12px; cursor: pointer; } button.wz-step:hover:not(.on) { outline: 2px solid var(--blue); }
   .wz-body { min-height: 220px; }
   .wz-body h3 { margin-top: 0; }
   .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
@@ -706,11 +707,18 @@ function drawAudiences() {
     return `<tr class="${r.Active === 'No' ? 'inactive' : ''}"><td><span class="pill t-${esc(r.AccessType)}">${esc(r.AccessType)}</span></td>`
       + `<td><b>${esc(r.AccessName)}</b>${r.Active === 'No' ? '<div class="sub">inactive</div>' : ''}</td><td>${scope}</td><td>${grp}</td><td>${view}</td>`
       + `<td>${c === undefined ? '…' : c === 'err' ? '<span class="sub">n/a</span>' : c}</td><td>${status}</td>`
-      + `<td style="white-space:nowrap">${ps.some(([k]) => k === 'bad') || !gids.length || !vid
-          ? `<button class="btn small" data-setup="${esc(r[accessOid])}" type="button">Finish setup</button> ` : `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">Setup</button> `}`
-      + `<button class="btn plain small" data-edit="${esc(r[accessOid])}" type="button">Edit</button></td></tr>`;
+      + `<td style="white-space:nowrap">${gids.length
+          ? `<button class="btn small" data-members="${esc(r[accessOid])}" type="button" title="Add, remove or create the accounts that see this audience">Members${memberCount(r) === null ? '' : ` (${memberCount(r)})`}</button> `
+          : `<button class="btn small" type="button" disabled title="Add a group first (Edit, step 2)">Members</button> `}`
+      + `<button class="btn plain small" data-setup="${esc(r[accessOid])}" type="button">${ps.some(([k]) => k === 'bad') || !gids.length || !vid ? 'Edit · finish setup' : 'Edit'}</button></td></tr>`;
   }).join('') || `<tr><td colspan="8" class="muted">${rows.length ? 'No audiences match the filter.' : 'No audiences yet. Use “Add audience”.'}</td></tr>`;
   drawUncovered();
+}
+
+// People in an audience's group(s), not counting the group owner (cusec_hub); null while the members are loading
+function memberCount(r) {
+  const gids = gidsOf(r); if (gids.some(g => !groupInfo[g]?.members)) return null;
+  return new Set(gids.flatMap(g => groupInfo[g].members.filter(m => m.role !== 'owner').map(m => m.username))).size;
 }
 
 // ── Add / edit audience ─────────────────────────────────────────────────────
@@ -922,14 +930,20 @@ function firstIncomplete(r) {
   return 5;
 }
 // preset (new audiences only): {AccessType, State, County} filled in from the "no audience" list
-function openWizard(r, preset) {
-  wz = { oid: r ? r[accessOid] : null, step: firstIncomplete(r), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null, preset: r ? null : preset || null };
-  $('wz-title').textContent = r ? `Set up: ${r.AccessName}` : 'Set up a new audience';
+// Edit opens an existing audience at the first unfinished step (step 1 when it's all set up); Members opens step 3.
+function openWizard(r, preset, step) {
+  const first = firstIncomplete(r);
+  wz = { oid: r ? r[accessOid] : null, step: step || (r && first === 5 ? 1 : first), groupMode: gidsOf(r).length ? 'keep' : 'new', busy: false, peopleGroup: null, preset: r ? null : preset || null };
+  $('wz-title').textContent = r ? `${step === 3 ? 'Members' : 'Edit'}: ${r.AccessName}` : 'Set up a new audience';
   $('wz-dialog').classList.remove('hidden'); renderWizard();
 }
 function renderWizard() {
   const r = wzRow(), s = wz.step;
-  $('wz-steps').innerHTML = WZ_STEPS.map((t, i) => `<div class="wz-step ${i + 1 === s ? 'on' : i + 1 < s ? 'done' : ''}">${i + 1}. ${t}</div>`).join('');
+  if (r) $('wz-title').textContent = `${s === 3 ? 'Members' : 'Edit'}: ${r.AccessName}`;
+  // an audience that's been saved can jump to any step by clicking it
+  $('wz-steps').innerHTML = WZ_STEPS.map((t, i) => r
+    ? `<button type="button" class="wz-step ${i + 1 === s ? 'on' : i + 1 < s ? 'done' : ''}" data-wzstep="${i + 1}" ${i + 1 === s ? 'aria-current="step"' : ''}>${i + 1}. ${t}</button>`
+    : `<div class="wz-step ${i + 1 === s ? 'on' : i + 1 < s ? 'done' : ''}">${i + 1}. ${t}</div>`).join('');
   $('wz-back').classList.toggle('hidden', s === 1 || s === 5);
   $('wz-next').classList.toggle('hidden', s === 5);
   $('wz-next').textContent = s === 1 ? 'Save and continue' : s === 4 ? 'Finish' : 'Continue';
@@ -993,6 +1007,9 @@ function wzWho(r) {
         <input id="wz-county" class="hidden" style="margin-top:6px" value="${esc(p?.County || '')}" placeholder="County name, without the word “County”" aria-label="County name" />
         <div class="hint hidden" id="wz-county-hint">Spell it the way the field data will (e.g. “St. Louis”), or the view will show no records.</div></div>
       <div class="full wz-name"><label for="wz-name">Name shown in this admin app</label><input id="wz-name" value="${esc(r?.AccessName || '')}" /></div>
+      ${r ? `<div><label for="wz-active">Active</label><select id="wz-active"><option ${r.Active !== 'No' ? 'selected' : ''}>Yes</option><option ${r.Active === 'No' ? 'selected' : ''}>No</option></select>
+        <div class="hint">No = kept for the record, hidden unless “Show inactive” is ticked. It doesn't change the group or view.</div></div>` : ''}
+      <div class="full"><label for="wz-notes">Notes</label><input id="wz-notes" value="${esc(r?.Notes || '')}" placeholder="${t === 'Partner' ? 'e.g. Cascadia Region Earthquake Workgroup; contact…' : 'Optional'}" /></div>
     </div>
     <p class="muted" id="wz-who-desc" style="margin-top:12px"></p>`;
 }
@@ -1004,7 +1021,8 @@ function wzWhoValues() {
   const cname = $('wz-clientname').value.trim();
   const name = $('wz-name').value.trim() || (t === 'Client' ? cname : t === 'County' ? (county && state ? `${county} County, ${state}` : '') : t === 'Partner' ? '' : (STATE_NAMES[state] || state));
   return { AccessType: t, AccessName: name, State: state, County: t === 'County' ? county : '',
-           ClientId: t === 'Client' ? $('wz-clientid').value.trim() : '', ClientName: t === 'Client' ? cname : '' };
+           ClientId: t === 'Client' ? $('wz-clientid').value.trim() : '', ClientName: t === 'Client' ? cname : '',
+           Active: $('wz-active') ? $('wz-active').value : 'Yes', Notes: $('wz-notes') ? $('wz-notes').value.trim() : '' };
 }
 function wzWhoSync() {
   const t = $('wz-type').value;
@@ -1039,20 +1057,51 @@ function wzGroup(r) {
   const opt = (mode, html) => `<label class="choice ${wz.groupMode === mode ? 'on' : ''}"><input type="radio" name="wz-gmode" value="${mode}" ${wz.groupMode === mode ? 'checked' : ''}><div>${html}</div></label>`;
   return `<h3>Which ArcGIS group${have && gids.length > 1 ? 's are' : ' is'} this audience?</h3>
     <p class="muted">Everyone in ${gids.length > 1 ? 'these groups' : 'the group'} will see ${describeAudience(r)}.
-      An audience can have more than one group (for a state: its state group and its agency's group).</p>
-    ${have ? `<div style="margin-top:10px">${gids.map(g => `<div class="member"><div><b>${esc(gtitle(g))}</b>${groupInfo[g]?.missing ? ' <span class="bad">not found</span>' : ''}</div>
-      <button class="btn danger small" data-wzdropgroup="${esc(g)}" type="button">Remove from this audience</button></div>`).join('')}</div>` : ''}
+      Use one group per audience, named <b>${esc(suggested)}</b>.</p>
+    ${gids.length > 1 ? `<div class="big-status warn" style="display:block"><b>This audience has ${gids.length} groups.</b> To keep it to one: in
+      <b>Members</b> (step 3), add anyone who's only in the group you'll drop to the one you keep, then remove the other group here.</div>` : ''}
+    ${have ? `<div style="margin-top:10px">${gids.map(g => {
+      const n = (groupInfo[g]?.members || []).filter(m => m.role !== 'owner').length, off = !groupInfo[g]?.missing && gtitle(g) !== suggested;
+      return `<div class="member"><div><b>${esc(gtitle(g))}</b>${groupInfo[g]?.missing ? ' <span class="bad">not found</span>' : ` <span class="sub">${n} member${n === 1 ? '' : 's'}</span>`}
+        ${off ? `<div class="sub">Suggested name: ${esc(suggested)}</div>` : ''}</div>
+      <div style="white-space:nowrap">${off ? `<button class="btn plain small" data-wzrename="${esc(g)}" type="button">Rename to suggested</button> ` : ''}${gids.length > 1
+        ? `<button class="btn danger small" data-wzdropgroup="${esc(g)}" type="button">Remove from this audience</button>` : ''}</div></div>`; }).join('')}</div>` : ''}
     <div style="margin-top:10px">
-    ${have ? opt('keep', 'Keep these groups') : ''}
+    ${have ? opt('keep', gids.length > 1 ? 'Keep these groups' : 'Keep this group') : ''}
     ${opt('new', `${have ? 'Also create' : 'Create'} a new group named<br><input id="wz-newgroup" value="${esc(suggested)}" style="margin-top:6px">`)}
     ${opt('existing', `${have ? 'Also add' : 'Use'} an existing group<br><select id="wz-existing" style="margin-top:6px">${groups.filter(x => !gids.includes(x.id)).map(x => `<option value="${esc(x.id)}">${esc(x.title)}</option>`).join('')}</select>`)}
     </div>`;
 }
+// Take a group off an audience: its view is unshared from that group too, so the group's members stop seeing these records
+// (unless they're also in a group the audience keeps). The group itself isn't deleted.
 async function wzDropGroup(gid) {
-  const r = wzRow(), left = gidsOf(r).filter(g => g !== gid);
-  if (!confirm(`Remove ${gtitle(gid)} from ${r.AccessName}? The group itself isn't deleted, and its sharing isn't changed.`)) return;
-  try { await writeRow(groupFields(left), r[accessOid]); wz.groupMode = left.length ? 'keep' : 'new'; renderWizard(); }
-  catch (e) { wzSay('err', esc(e.message)); }
+  const r = wzRow(), left = gidsOf(r).filter(g => g !== gid), vid = (r.ViewItemId || '').trim();
+  const kept = new Set(left.flatMap(g => (groupInfo[g]?.members || []).map(m => m.username)));
+  const lose = (groupInfo[gid]?.members || []).filter(m => m.role !== 'owner' && !kept.has(m.username)).map(m => m.username);
+  if (!confirm(`Remove ${gtitle(gid)} from ${r.AccessName}?\n\n`
+    + (lose.length ? `These people are only in that group and will STOP seeing ${r.AccessName}'s records:\n  ${lose.join('\n  ')}\n\nAdd them to ${left.map(gtitle).join(' / ')} first (Members) if they should keep access.\n\n`
+                   : `Everyone in it is also in ${left.map(gtitle).join(' / ')}, so nobody loses access.\n\n`)
+    + `The view is unshared from the group. The group itself isn't deleted.`)) return;
+  try {
+    if (vid && !viewInfo[vid]?.missing && (viewShares[vid] || []).includes(gid))
+      await rest(sharing(`content/users/${viewInfo[vid]?.owner || me.username}/items/${vid}/unshare`), { groups: gid }, true);
+    await writeRow(groupFields(left), r[accessOid]); await checkAudiences();
+    wz.groupMode = left.length ? 'keep' : 'new'; renderWizard();
+    wzSay('ok', `Removed <b>${esc(gtitle(gid))}</b> from this audience${vid ? ' and unshared the view from it' : ''}.`);
+  } catch (e) { wzSay('err', esc(e.message)); }
+}
+// Rename a group to the naming convention (RVS State - …, RVS County - …, RVS Partner - …, RVS Client - …)
+async function wzRenameGroup(gid) {
+  const r = wzRow(), to = groupTitleFor(r);
+  if (!confirm(`Rename the ArcGIS group “${gtitle(gid)}” to “${to}”?\n\nMembers and sharing don't change; only the name does.`)) return;
+  try {
+    const res = await rest(sharing(`community/groups/${gid}/update`), { title: to }, true);
+    if (res.success === false) throw new Error('ArcGIS did not rename the group.');
+    groupInfo[gid] = Object.assign(groupInfo[gid] || {}, { title: to });
+    const g = groups.find(x => x.id === gid); if (g) g.title = to;
+    await writeRow(groupFields(gidsOf(r)), r[accessOid]);           // keep GroupName in the table in step
+    renderWizard(); wzSay('ok', `Renamed to <b>${esc(to)}</b>.`);
+  } catch (e) { wzSay('err', 'Could not rename the group: ' + esc(e.message) + (/exist|already/i.test(e.message) ? ' (another group already has that name)' : '')); }
 }
 
 // Step 3: people
@@ -1239,7 +1288,6 @@ async function wzNext() {
     if (s === 1) {
       const v = wzWhoValues(), errs = wzWhoErrors(v, r);
       if (errs.length) { wzSay('err', errs.map(esc).join('<br>')); return; }
-      if (!r) v.Active = 'Yes';
       wz.oid = await writeRow(v, r ? r[accessOid] : null);
       // states changed on an audience that already has a view: put the new filter on the view too
       if (r && (r.ViewItemId || '').trim() && normWhere(audienceWhere(r)) !== normWhere(audienceWhere(v))) {
@@ -1571,6 +1619,7 @@ $('imp-add').onclick = addImported;
 $('imp-rows').addEventListener('change', e => { const i = e.target.dataset.imp; if (i !== undefined) { importProps[i].selected = e.target.checked; drawImport(); } });
 $('imp-all').onchange = e => { importProps.forEach(p => { if (!p.existing) p.selected = e.target.checked; }); drawImport(); };
 $('wz-next').onclick = wzNext;
+$('wz-steps').onclick = e => { const b = e.target.closest('[data-wzstep]'); if (b && !wz?.busy && wzRow()) { wz.step = Number(b.dataset.wzstep); renderWizard(); } };
 $('wz-back').onclick = () => { wz.step = Math.max(1, wz.step - 1); renderWizard(); };
 $('wz-close').onclick = () => { if (!wz?.busy) $('wz-dialog').classList.add('hidden'); };
 $('wz-body').addEventListener('input', e => { if (e.target.closest('#wz-type, #wz-state, #wz-county, #wz-clientname, #wz-name, #wz-clientid')) {
@@ -1597,6 +1646,7 @@ $('wz-body').addEventListener('click', e => {
   if (t.dataset.disable) setDisabled(t.dataset.disable, t.dataset.on === '1', wzLoadMembers);
   if (t.dataset.wzgo) { wz.step = Number(t.dataset.wzgo); renderWizard(); }
   if (t.dataset.wzdropgroup) wzDropGroup(t.dataset.wzdropgroup);
+  if (t.dataset.wzrename) wzRenameGroup(t.dataset.wzrename);
   if (t.id === 'wz-new-account') { userEdited = false; openAccount([wz.peopleGroup].filter(Boolean), () => { wzLoadMembers(); drawAudiences(); }, wzRow()); }
 });
 $('auth-btn').onclick = () => token ? signOut() : signIn();
@@ -1609,9 +1659,9 @@ $('aud-filter').oninput = drawAudiences; $('aud-inactive').onchange = drawAudien
 $('aud-type').onclick = e => { const b = e.target.closest('button[data-type]'); if (!b) return; audType = b.dataset.type; drawAudiences(); };
 $('aud-refresh').onclick = loadAll; $('aud-add').onclick = () => openWizard(null);
 $('aud-rows').onclick = e => {
-  const b = e.target.closest('[data-edit]'), s = e.target.closest('[data-setup]');
-  if (b) openAudience(rows.find(r => String(r[accessOid]) === b.dataset.edit));
+  const s = e.target.closest('[data-setup]'), m = e.target.closest('[data-members]');
   if (s) openWizard(rows.find(r => String(r[accessOid]) === s.dataset.setup));
+  if (m) openWizard(rows.find(r => String(r[accessOid]) === m.dataset.members), null, 3);
 };
 $('org-wide').onclick = e => { const b = e.target.closest('[data-orgoff]'); if (b) stopOrgWide(b.dataset.orgoff); };
 $('uncovered').addEventListener('toggle', e => { if (e.target.tagName === 'DETAILS') uncoveredOpen = e.target.open; }, true);
